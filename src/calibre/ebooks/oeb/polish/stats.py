@@ -1,21 +1,18 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import sys
 from functools import partial
 
-from lxml.etree import tostring
 import regex
+from lxml.etree import tostring
+from tinycss.fonts3 import parse_font_family
 
 from calibre.ebooks.oeb.base import XHTML, css_text
-from calibre.ebooks.oeb.polish.cascade import iterrules, resolve_styles, iterdeclaration
+from calibre.ebooks.oeb.polish.cascade import iterdeclaration, iterrules, resolve_styles
+from calibre.utils.icu import lower as icu_lower
 from calibre.utils.icu import ord_string, safe_chr
-from polyglot.builtins import iteritems, itervalues
-from tinycss.fonts3 import parse_font_family
+from calibre.utils.icu import upper as icu_upper
 
 
 def normalize_font_properties(font):
@@ -23,9 +20,8 @@ def normalize_font_properties(font):
     if not w and w != 0:
         w = 'normal'
     w = str(w)
-    w = {'normal':'400', 'bold':'700'}.get(w, w)
-    if w not in {'100', '200', '300', '400', '500', '600', '700',
-            '800', '900'}:
+    w = {'normal': '400', 'bold': '700'}.get(w, w)
+    if w not in {'100', '200', '300', '400', '500', '600', '700', '800', '900'}:
         w = '400'
     font['font-weight'] = w
 
@@ -35,18 +31,36 @@ def normalize_font_properties(font):
     font['font-style'] = val
 
     val = font.get('font-stretch', None)
-    if val not in {'normal', 'ultra-condensed', 'extra-condensed', 'condensed',
-                   'semi-condensed', 'semi-expanded', 'expanded',
-                   'extra-expanded', 'ultra-expanded'}:
+    if val not in {
+        'normal',
+        'ultra-condensed',
+        'extra-condensed',
+        'condensed',
+        'semi-condensed',
+        'semi-expanded',
+        'expanded',
+        'extra-expanded',
+        'ultra-expanded',
+    }:
         val = 'normal'
     font['font-stretch'] = val
     return font
 
 
-widths = {x:i for i, x in enumerate(('ultra-condensed',
-        'extra-condensed', 'condensed', 'semi-condensed', 'normal',
-        'semi-expanded', 'expanded', 'extra-expanded', 'ultra-expanded'
-        ))}
+widths = {
+    x: i
+    for i, x in enumerate((
+        'ultra-condensed',
+        'extra-condensed',
+        'condensed',
+        'semi-condensed',
+        'normal',
+        'semi-expanded',
+        'expanded',
+        'extra-expanded',
+        'ultra-expanded',
+    ))
+}
 
 
 def get_matching_rules(rules, font):
@@ -63,20 +77,17 @@ def get_matching_rules(rules, font):
     # Filter on font stretch
     width = widths[font.get('font-stretch', 'normal')]
 
-    min_dist = min(abs(width-y['width']) for y in matches)
-    nearest = [x for x in matches if abs(width-x['width']) == min_dist]
+    min_dist = min(abs(width - y['width']) for y in matches)
+    nearest = [x for x in matches if abs(width - x['width']) == min_dist]
     if width <= 4:
         lmatches = [f for f in nearest if f['width'] <= width]
     else:
         lmatches = [f for f in nearest if f['width'] >= width]
-    matches = (lmatches or nearest)
+    matches = lmatches or nearest
 
     # Filter on font-style
     fs = font.get('font-style', 'normal')
-    order = {
-            'oblique':['oblique', 'italic', 'normal'],
-            'normal':['normal', 'oblique', 'italic']
-        }.get(fs, ['italic', 'oblique', 'normal'])
+    order = {'oblique': ['oblique', 'italic', 'normal'], 'normal': ['normal', 'oblique', 'italic']}.get(fs, ['italic', 'oblique', 'normal'])
     for q in order:
         m = [f for f in matches if f.get('font-style', 'normal') == q]
         if m:
@@ -90,11 +101,9 @@ def get_matching_rules(rules, font):
     elif fw == 500:
         q = [500, 400, 300, 200, 100, 600, 700, 800, 900]
     elif fw < 400:
-        q = [fw] + list(range(fw-100, -100, -100)) + list(range(fw+100,
-            100, 1000))
+        q = [fw] + list(range(fw - 100, -100, -100)) + list(range(fw + 100, 100, 1000))
     else:
-        q = [fw] + list(range(fw+100, 100, 1000)) + list(range(fw-100,
-            -100, -100))
+        q = [fw] + list(range(fw + 100, 100, 1000)) + list(range(fw - 100, -100, -100))
     for wt in q:
         m = [f for f in matches if f['weight'] == wt]
         if m:
@@ -178,15 +187,12 @@ def prepare_font_rule(cssdict):
 
 
 class StatsCollector:
-
     first_letter_pat = capitalize_pat = None
 
     def __init__(self, container, do_embed=False):
         if self.first_letter_pat is None:
-            StatsCollector.first_letter_pat = self.first_letter_pat = regex.compile(
-                r'^[\p{Ps}\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Po}]+', regex.VERSION1 | regex.UNICODE)
-            StatsCollector.capitalize_pat = self.capitalize_pat = regex.compile(
-                r'[\p{L}\p{N}]', regex.VERSION1 | regex.UNICODE)
+            StatsCollector.first_letter_pat = self.first_letter_pat = regex.compile(r'^[\p{P}]*[\p{L}\p{N}]', regex.VERSION1 | regex.UNICODE)
+            StatsCollector.capitalize_pat = self.capitalize_pat = regex.compile(r'[\p{L}\p{N}]', regex.VERSION1 | regex.UNICODE)
 
         self.collect_font_stats(container, do_embed)
 
@@ -212,7 +218,7 @@ class StatsCollector:
                                 cssdict['src'] = fname
                                 break
                         else:
-                            container.log.warn('The @font-face rule refers to a font file that does not exist in the book: %s' % css_text(prop.propertyValue))
+                            container.log.warn(f'The @font-face rule refers to a font file that does not exist in the book: {css_text(prop.propertyValue)}')
                 if 'src' not in cssdict:
                     continue
                 ff = cssdict.get('font-family')
@@ -233,7 +239,7 @@ class StatsCollector:
                 return
             ff = [icu_lower(x) for x in font.get('font-family', ())]
             if ff and ff[0] not in bad_fonts:
-                key = frozenset(((k, ff[0] if k == 'font-family' else v) for k, v in iteritems(font) if k in font_keys))
+                key = frozenset(((k, ff[0] if k == 'font-family' else v) for k, v in font.items() if k in font_keys))
                 val = font_usage_map.get(key)
                 if val is None:
                     val = font_usage_map[key] = {'text': set()}
@@ -249,19 +255,19 @@ class StatsCollector:
         update_usage_for_embed(font, chars)
         for rule in get_matching_rules(font_face_rules, font):
             self.font_stats[rule['src']] |= chars
-        q = resolve_pseudo_property(elem, 'first-letter', 'font-family', abort_on_missing=True)
-        if q is not None:
+        if resolve_pseudo_property(elem, 'first-letter', 'font-family', check_if_pseudo_applies=True):
             font = get_font_dict(elem, resolve_pseudo_property, pseudo='first-letter')
             text = get_element_text(elem, resolve_property, resolve_pseudo_property, self.capitalize_pat, for_pseudo='first-letter')
-            m = self.first_letter_pat.search(text.lstrip())
+            first_letter_pat = self.first_letter_pat
+            assert first_letter_pat is not None
+            m = first_letter_pat.search(text.lstrip())
             if m is not None:
                 chars = frozenset(ord_string(m.group())) - exclude_chars
                 update_usage_for_embed(font, chars)
                 for rule in get_matching_rules(font_face_rules, font):
                     self.font_stats[rule['src']] |= chars
-        q = resolve_pseudo_property(elem, 'first-line', 'font-family', abort_on_missing=True)
-        if q is not None:
-            font = get_font_dict(elem, resolve_pseudo_property, pseudo='first-letter')
+        if resolve_pseudo_property(elem, 'first-line', 'font-family', check_if_pseudo_applies=True, check_ancestors=True):
+            font = get_font_dict(elem, partial(resolve_pseudo_property, check_ancestors=True), pseudo='first-line')
             text = get_element_text(elem, resolve_property, resolve_pseudo_property, self.capitalize_pat, for_pseudo='first-line')
             chars = frozenset(ord_string(text)) - exclude_chars
             update_usage_for_embed(font, chars)
@@ -274,11 +280,17 @@ class StatsCollector:
             for elem in body.iter('*'):
                 if elem.tag not in skip_tags:
                     self.get_element_font_usage(
-                        elem, resolve_property, resolve_pseudo_property, font_face_rules, do_embed,
-                        self.font_usage_map[spine_name], self.font_spec_map[spine_name])
+                        elem,
+                        resolve_property,
+                        resolve_pseudo_property,
+                        font_face_rules,
+                        do_embed,
+                        self.font_usage_map[spine_name],
+                        self.font_spec_map[spine_name],
+                    )
 
     def collect_font_stats(self, container, do_embed=False):
-        self.font_stats = {}
+        self.font_stats: dict = {}
         self.font_usage_map = {}
         self.font_spec_map = {}
         self.font_rule_map = {}
@@ -287,8 +299,9 @@ class StatsCollector:
         processed_sheets = {}
         for name, is_linear in container.spine_names:
             self.font_rule_map[name] = font_face_rules = []
-            resolve_property, resolve_pseudo_property, select = resolve_styles(container, name, sheet_callback=partial(
-                self.collect_font_face_rules, container, processed_sheets, name))
+            resolve_property, resolve_pseudo_property, select = resolve_styles(
+                container, name, sheet_callback=partial(self.collect_font_face_rules, container, processed_sheets, name)
+            )
 
             for rule in font_face_rules:
                 self.all_font_rules[rule['src']] = rule
@@ -298,16 +311,18 @@ class StatsCollector:
             self.font_usage_map[name] = {}
             self.font_spec_map[name] = set()
             self.get_font_usage(container, name, resolve_property, resolve_pseudo_property, font_face_rules, do_embed)
-        self.font_stats = {k:{safe_chr(x) for x in v} for k, v in iteritems(self.font_stats)}
-        for fum in itervalues(self.font_usage_map):
-            for v in itervalues(fum):
+        self.font_stats = {k: {safe_chr(x) for x in v} for k, v in self.font_stats.items()}
+        for fum in self.font_usage_map.values():
+            for v in fum.values():
                 v['text'] = {safe_chr(x) for x in v['text']}
 
 
 if __name__ == '__main__':
     from calibre.ebooks.oeb.polish.container import get_container
     from calibre.utils.logging import default_log
+
     default_log.filter_level = default_log.DEBUG
     ebook = get_container(sys.argv[-1], default_log)
     from pprint import pprint
+
     pprint(StatsCollector(ebook, do_embed=True).font_stats)

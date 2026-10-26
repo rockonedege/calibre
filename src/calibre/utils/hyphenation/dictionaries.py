@@ -1,29 +1,29 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2019, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import errno
 import json
 import os
 import tarfile
-from io import BytesIO
+from functools import lru_cache
 
 from calibre.constants import cache_dir
 from calibre.ptempfile import TemporaryDirectory
 from calibre.utils.localization import lang_as_iso639_1
 from calibre.utils.lock import ExclusiveFile
-from polyglot.builtins import iteritems
-from polyglot.functools import lru_cache
+from calibre.utils.resources import get_path as P
+
+_locale_map_cache: dict | None = None
 
 
 def locale_map():
-    ans = getattr(locale_map, 'ans', None)
-    if ans is None:
-        ans = locale_map.ans = {k.lower(): v for k, v in iteritems(json.loads(P('hyphenation/locales.json', data=True)))}
-    return ans
+    global _locale_map_cache
+    if _locale_map_cache is None:
+        _locale_map_cache = {k.lower(): v for k, v in json.loads(P('hyphenation/locales.json', data=True)).items()}
+    return _locale_map_cache
 
 
-@lru_cache()
+@lru_cache
 def dictionary_name_for_locale(loc):
     loc = loc.lower().replace('-', '_')
     lmap = locale_map()
@@ -46,9 +46,9 @@ def dictionary_name_for_locale(loc):
     if loc == 'es':
         return lmap['es_es']
     q = loc + '_'
-    for k, v in iteritems(lmap):
+    for k, v in lmap.items():
         if k.startswith(q):
-            return lmap[k]
+            return v
 
 
 @lru_cache(maxsize=2)
@@ -59,19 +59,12 @@ def expected_hash():
 def extract_dicts(cache_path):
     dict_tarball = P('hyphenation/dictionaries.tar.xz', allow_user_override=False)
     with TemporaryDirectory(dir=cache_path) as tdir:
-        try:
-            from calibre_lzma.xz import decompress
-        except ImportError:
-            tf = tarfile.open(dict_tarball)
-        else:
-            buf = BytesIO()
-            with lopen(dict_tarball, 'rb') as f:
-                data = f.read()
-            decompress(data, outfile=buf)
-            buf.seek(0)
-            tf = tarfile.TarFile(fileobj=buf)
+        tf = tarfile.open(dict_tarball)
         with tf:
-            tf.extractall(tdir)
+            try:
+                tf.extractall(tdir, filter='data')
+            except TypeError:
+                tf.extractall(tdir)
         with open(os.path.join(tdir, 'sha1sum'), 'wb') as f:
             f.write(expected_hash())
         dest = os.path.join(cache_path, 'f')
@@ -85,21 +78,27 @@ def extract_dicts(cache_path):
     is_cache_up_to_date.updated = True
 
 
-def is_cache_up_to_date(cache_path):
-    if getattr(is_cache_up_to_date, 'updated', False):
-        return True
-    try:
-        with open(os.path.join(cache_path, 'f', 'sha1sum'), 'rb') as f:
-            actual_hash = f.read()
-        if actual_hash == expected_hash():
-            is_cache_up_to_date.updated = True
+class _IsCacheUpToDate:
+    updated: bool = False
+
+    def __call__(self, cache_path: str) -> bool:
+        if self.updated:
             return True
-    except OSError:
-        pass
-    return False
+        try:
+            with open(os.path.join(cache_path, 'f', 'sha1sum'), 'rb') as f:
+                actual_hash = f.read()
+            if actual_hash == expected_hash():
+                self.updated = True
+                return True
+        except OSError:
+            pass
+        return False
 
 
-@lru_cache()
+is_cache_up_to_date = _IsCacheUpToDate()
+
+
+@lru_cache
 def get_cache_path(cd):
     cache_path = os.path.join(cd, 'hyphenation')
     try:

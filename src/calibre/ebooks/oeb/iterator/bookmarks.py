@@ -1,11 +1,9 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import os, numbers
+import numbers
+import os
+from collections.abc import MutableMapping
 from io import BytesIO
 
 from calibre.utils.zipfile import safe_replace
@@ -26,7 +24,7 @@ def parse_bookmarks(raw):
                 spine = int(spine.strip())
             except Exception:
                 continue
-            yield {'type':'legacy', 'title':title, 'spine':spine, 'pos':pos}
+            yield {'type': 'legacy', 'title': title, 'spine': spine, 'pos': pos}
         elif BM_FIELD_SEP in line:
             try:
                 title, spine, pos = line.strip().split(BM_FIELD_SEP)
@@ -40,10 +38,13 @@ def parse_bookmarks(raw):
                 pos = float(pos)
             except Exception:
                 pass
-            yield {'type':'cfi', 'title':title, 'pos':pos, 'spine':spine}
+            yield {'type': 'cfi', 'title': title, 'pos': pos, 'spine': spine}
 
 
 class BookmarksMixin:
+    config: MutableMapping[str, object]
+    pathtoebook: str
+    base: str
 
     def __init__(self, copy_bookmarks_to_file=True):
         self.copy_bookmarks_to_file = copy_bookmarks_to_file
@@ -56,7 +57,7 @@ class BookmarksMixin:
         dat = []
         for bm in bookmarks:
             if bm['type'] == 'legacy':
-                rec = '%s^%d#%s'%(bm['title'], bm['spine'], bm['pos'])
+                rec = f"{bm['title']}^{bm['spine']}#{bm['pos']}"
             else:
                 pos = bm['pos']
                 if isinstance(pos, numbers.Number):
@@ -65,11 +66,11 @@ class BookmarksMixin:
                     pos = pos.replace('^', BM_LEGACY_ESC)
                 rec = BM_FIELD_SEP.join([bm['title'], str(bm['spine']), pos])
             dat.append(rec)
-        return ('\n'.join(dat) +'\n')
+        return '\n'.join(dat) + '\n'
 
     def read_bookmarks(self):
         self.bookmarks = []
-        raw = self.config['bookmarks_'+self.pathtoebook] or ''
+        raw = self.config['bookmarks_' + self.pathtoebook] or ''
         if not raw:
             # Look for bookmarks saved inside the ebook
             bmfile = os.path.join(self.base, 'META-INF', 'calibre_bookmarks.txt')
@@ -84,20 +85,20 @@ class BookmarksMixin:
         if bookmarks is None:
             bookmarks = self.bookmarks
         dat = self.serialize_bookmarks(bookmarks)
-        self.config['bookmarks_'+self.pathtoebook] = dat
-        if not no_copy_to_file and self.copy_bookmarks_to_file and os.path.splitext(
-                self.pathtoebook)[1].lower() == '.epub' and os.access(self.pathtoebook, os.W_OK):
+        self.config['bookmarks_' + self.pathtoebook] = dat
+        if (
+            not no_copy_to_file
+            and self.copy_bookmarks_to_file
+            and os.path.splitext(self.pathtoebook)[1].lower() == '.epub'
+            and os.access(self.pathtoebook, os.W_OK)
+        ):
             try:
-                with open(self.pathtoebook, 'r+b') as zf:
-                    safe_replace(zf, 'META-INF/calibre_bookmarks.txt',
-                            BytesIO(dat.encode('utf-8')),
-                            add_missing=True)
+                safe_replace(self.pathtoebook, 'META-INF/calibre_bookmarks.txt', BytesIO(dat.encode('utf-8')), add_missing=True)
             except OSError:
                 return
 
     def add_bookmark(self, bm, no_copy_to_file=False):
-        self.bookmarks = [x for x in self.bookmarks if x['title'] !=
-                bm['title']]
+        self.bookmarks = [x for x in self.bookmarks if x['title'] != bm['title']]
         self.bookmarks.append(bm)
         self.save_bookmarks(no_copy_to_file=no_copy_to_file)
 

@@ -1,38 +1,38 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-
+import os
+from functools import partial
 from io import BytesIO
 from itertools import count
-from functools import partial
-from zipfile import ZipFile, ZIP_STORED
-import os
-from calibre.ebooks.oeb.polish.tests.base import BaseTest
-from calibre.ebooks.oeb.polish.container import get_container
-from calibre.ebooks.oeb.polish.create import create_book
-from calibre.ebooks.oeb.polish.cover import (
-    find_cover_image, mark_as_cover, find_cover_page, mark_as_titlepage, clean_opf
-)
-from calibre.ebooks.oeb.polish.toc import get_toc, from_xpaths as toc_from_xpaths, get_landmarks
-from calibre.ebooks.oeb.polish.utils import guess_type
-from calibre.ebooks.oeb.base import OEB_DOCS
+from zipfile import ZIP_STORED, ZipFile
+
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.ebooks.metadata.opf3 import CALIBRE_PREFIX
+from calibre.ebooks.oeb.base import EPUB_NS, OEB_DOCS, XHTML, barename, xml2text
+from calibre.ebooks.oeb.polish.container import get_container
+from calibre.ebooks.oeb.polish.cover import clean_opf, find_cover_image, find_cover_page, mark_as_cover, mark_as_titlepage
+from calibre.ebooks.oeb.polish.create import create_book
+from calibre.ebooks.oeb.polish.tests.base import BaseTest
+from calibre.ebooks.oeb.polish.toc import commit_nav_toc, get_landmarks, get_toc
+from calibre.ebooks.oeb.polish.toc import from_xpaths as toc_from_xpaths
+from calibre.ebooks.oeb.polish.upgrade import upgrade_book
+from calibre.ebooks.oeb.polish.utils import guess_type
 
-OPF_TEMPLATE = '''
-<package xmlns="http://www.idpf.org/2007/opf" version="{ver}" prefix="calibre: %s" unique-identifier="uid">
+OPF_TEMPLATE = f'''
+<package xmlns="http://www.idpf.org/2007/opf" version="{{ver}}" prefix="calibre: {CALIBRE_PREFIX}" unique-identifier="uid">
     <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
         <dc:identifier id="uid">test</dc:identifier>
-        {metadata}
+        {{metadata}}
     </metadata>
-    <manifest>{manifest}</manifest>
-    <spine>{spine}</spine>
-    <guide>{guide}</guide>
-</package>''' % CALIBRE_PREFIX  # noqa
+    <manifest>{{manifest}}</manifest>
+    <spine>{{spine}}</spine>
+    <guide>{{guide}}</guide>
+</package>'''
 
 
 def create_manifest_item(name, data=b'', properties=None):
-    return (name, data, properties)
+    return name, data, properties
 
 
 cmi = create_manifest_item
@@ -41,25 +41,27 @@ cmi = create_manifest_item
 def create_epub(manifest, spine=(), guide=(), meta_cover=None, ver=3):
     mo = []
     for name, data, properties in manifest:
-        mo.append('<item id="{}" href="{}" media-type="{}" {}/>'.format(
-            name, name, guess_type(name), ('properties="%s"' % properties if properties else '')))
+        mo.append('<item id="{}" href="{}" media-type="{}" {}/>'.format(name, name, guess_type(name), (f'properties="{properties}"' if properties else '')))
     mo = ''.join(mo)
     metadata = ''
     if meta_cover:
-        metadata = '<meta name="cover" content="%s"/>' % meta_cover
+        metadata = f'<meta name="cover" content="{meta_cover}"/>'
     if not spine:
         spine = [x[0] for x in manifest if guess_type(x[0]) in OEB_DOCS]
-    spine = ''.join('<itemref idref="%s"/>' % name for name in spine)
+    spine = ''.join(f'<itemref idref="{name}"/>' for name in spine)
     guide = ''.join(f'<reference href="{name}" type="{typ}" title="{title}"/>' for name, typ, title in guide)
-    opf = OPF_TEMPLATE.format(manifest=mo, ver='%d.0'%ver, metadata=metadata, spine=spine, guide=guide)
+    opf = OPF_TEMPLATE.format(manifest=mo, ver=f'{ver}.0', metadata=metadata, spine=spine, guide=guide)
     buf = BytesIO()
     with ZipFile(buf, 'w', ZIP_STORED) as zf:
-        zf.writestr('META-INF/container.xml', b'''
+        zf.writestr(
+            'META-INF/container.xml',
+            b'''
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
    <rootfiles>
       <rootfile full-path="content.opf" media-type="application/oebps-package+xml"/>
    </rootfiles>
-</container>''')
+</container>''',
+        )
         zf.writestr('content.opf', opf.encode('utf-8'))
         for name, data, properties in manifest:
             if isinstance(data, str):
@@ -73,13 +75,12 @@ counter = count()
 
 
 class Structure(BaseTest):
-
     def create_epub(self, *args, **kw):
         n = next(counter)
         ep = os.path.join(self.tdir, str(n) + 'book.epub')
         with open(ep, 'wb') as f:
             f.write(create_epub(*args, **kw).getvalue())
-        c = get_container(ep, tdir=os.path.join(self.tdir, 'container%d' % n), tweak_mode=True)
+        c = get_container(ep, tdir=os.path.join(self.tdir, f'container{n}'), tweak_mode=True)
         return c
 
     def test_toc_detection(self):
@@ -91,20 +92,23 @@ class Structure(BaseTest):
         c.opf.set('version', '3.0')
         self.assertEqual(3, c.opf_version_parsed.major)
         self.assertTrue(len(get_toc(c)))  # detect NCX toc even in epub 3 files
-        c.add_file('nav.html', b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-                   b'<body><nav epub:type="toc"><ol><li><a href="start.xhtml">EPUB 3 nav</a></li></ol></nav></body></html>',
-                   process_manifest_item=lambda item:item.set('properties', 'nav'))
+        c.add_file(
+            'nav.html',
+            b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+            b'<body><nav epub:type="toc"><ol><li><a href="start.xhtml">EPUB 3 nav</a></li></ol></nav></body></html>',
+            process_manifest_item=lambda item: item.set('properties', 'nav'),
+        )
         toc = get_toc(c)
         self.assertTrue(len(toc))
         self.assertEqual(toc.as_dict['children'][0]['title'], 'EPUB 3 nav')
 
         def tfx(linear, expected):
-            items = ['<t{0}>{0}</t{0}>'.format(x) for x in linear]
+            items = [f'<t{x}>{x}</t{x}>' for x in linear]
             html = '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-            html += '<body>%s</body></html>' % '\n'.join(items)
+            html += '<body>{}</body></html>'.format('\n'.join(items))
             with c.open('nav.html', 'wb') as f:
                 f.write(html.encode('utf-8'))
-            toc = toc_from_xpaths(c, ['//h:t'+x for x in sorted(set(linear))])
+            toc = toc_from_xpaths(c, ['//h:t' + x for x in sorted(set(linear))])
 
             def p(node):
                 ans = ''
@@ -114,29 +118,216 @@ class Structure(BaseTest):
                         ans += c.title + p(c)
                     ans += ']'
                 return ans
-            self.assertEqual('[%s]'%expected, p(toc))
+
+            self.assertEqual(f'[{expected}]', p(toc))
 
         tfx('121333', '1[2]1[333]')
         tfx('1223424', '1[22[3[4]]2[4]]')
         tfx('32123', '321[2[3]]')
         tfx('123123', '1[2[3]]1[2[3]]')
 
+    def test_nav_ids_preserved(self):
+        # Other files can link to ids in the nav, they must survive
+        # re-generation of the nav, see https://bugs.launchpad.net/bugs/2169441
+        body = b'<html xmlns="http://www.w3.org/1999/xhtml"><body><p id="top">x</p></body></html>'
+        c = self.create_epub([
+            cmi('a.html', body),
+            cmi('b.html', body),
+            cmi('c.html', body),
+            cmi(
+                'nav.html',
+                b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+                b'<nav epub:type="toc"><h2 id="toch">Contents</h2><ol id="tocol">'
+                b'<li id="lia"><a id="ida" href="a.html">A</a></li>'
+                b'<li><a id="idb" href="b.html#top">B</a></li>'
+                b'<li><a id="idc" href="c.html">C</a></li>'
+                b'</ol></nav>'
+                b'<nav epub:type="landmarks"><ol><li><a id="lma" epub:type="bodymatter" href="a.html">Start</a></li></ol></nav>'
+                b'</body></html>',
+                'nav',
+            ),
+        ])
+        toc = get_toc(c)
+        toc.children[2].remove_from_parent()  # removed entry
+        toc.children[1].frag = None  # fragment removed during conversion
+        toc.children[1].title = 'Changed'
+        commit_nav_toc(c, toc, landmarks=get_landmarks(c))
+        root = c.parsed('nav.html')
+
+        def elem(eid):
+            ans = root.xpath(f'//*[@id="{eid}"]')
+            self.assertEqual(1, len(ans), eid)
+            return ans[0]
+
+        self.assertEqual(barename(elem('toch').tag), 'h1')
+        self.assertEqual(barename(elem('tocol').tag), 'ol')
+        self.assertEqual(barename(elem('lia').tag), 'li')
+        self.assertEqual(elem('ida').get('href'), 'a.html')
+        self.assertEqual(elem('idb').get('href'), 'b.html')
+        self.assertEqual(elem('lma').get('href'), 'a.html')
+        # No corresponding entry, so preserved as an empty anchor just before
+        # the nav as a nav may contain only a heading and an <ol>, see
+        # https://bugs.launchpad.net/bugs/2170400
+        e = elem('idc')
+        self.assertEqual(barename(e.tag), 'span')
+        self.assertEqual(barename(e.getparent().tag), 'body')
+        self.assertIs(e.getnext(), elem('toch').getparent())
+        self.assertFalse(e.text)
+        for nav in root.iterdescendants(XHTML('nav')):
+            self.assertEqual([barename(x.tag) for x in nav], ['h1', 'ol'] if nav.get(f'{{{EPUB_NS}}}type') == 'toc' else ['ol'])
+
+        # Conversion produces a ToC with no title, the heading from the
+        # existing nav must be preserved, along with its id
+        c = self.create_epub([
+            cmi('a.html', body),
+            cmi(
+                'nav.html',
+                b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+                b'<nav epub:type="toc"><h1 class="toc-title" id="hd-toc"><span class="special">CONTENTS</span></h1><ol>'
+                b'<li><a href="a.html">A</a></li></ol></nav></body></html>',
+                'nav',
+            ),
+        ])
+        toc = get_toc(c)
+        toc.toc_title = None
+        commit_nav_toc(c, toc, previous_nav=('nav.html', c.parsed('nav.html')))
+        root = c.parsed('nav.html')
+        self.assertEqual(barename(elem('hd-toc').tag), 'h1')
+        self.assertEqual(elem('hd-toc').get('class'), 'toc-title')
+        self.assertEqual(xml2text(elem('hd-toc')).strip(), 'CONTENTS')
+        self.assertEqual(barename(elem('hd-toc').getparent().tag), 'nav')
+        self.assertEqual(1, len(root.xpath('//*[@class="special"]')))
+
+    def test_landmarks_preserved_by_conversion(self):
+        # EPUB input must replace guide entries with the landmarks from the
+        # nav so that conversion to any output format uses them, see
+        # https://bugs.launchpad.net/bugs/2172176
+        from types import SimpleNamespace
+
+        from calibre import CurrentDir
+        from calibre.customize.ui import plugin_for_input_format
+        from calibre.ebooks.conversion.plumber import Plumber
+        from calibre.ebooks.metadata.opf2 import OPF
+        from calibre.ebooks.oeb.transforms.guide import CUSTOM_GUIDE_TYPE_PREFIX
+        from calibre.utils.logging import DevNull
+
+        body = '<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="h">{}</h1><p>x</p></body></html>'
+        nav = (
+            b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>'
+            b'<nav epub:type="toc" id="toc"><ol><li><a href="a.html">A</a></li><li><a href="b.html">B</a></li></ol></nav>'
+            b'<nav epub:type="landmarks"><ol>'
+            b'<li><a epub:type="toc" href="#toc">Contents</a></li>'
+            b'<li><a epub:type="seriespage" href="b.html">Series</a></li>'
+            b'<li><a epub:type="bodymatter" href="c.html#h">Start</a></li>'
+            b'<li><a epub:type="index" href="missing.html">Index</a></li>'
+            b'<li><a epub:type="bodymatter" href="d.html">Duplicate</a></li>'
+            b'</ol></nav></body></html>'
+        )
+        epub = create_epub(
+            [*(cmi(f'{x}.html', body.format(x)) for x in 'abcd'), cmi('nav.html', nav, 'nav')],
+            spine=('a.html', 'b.html', 'c.html', 'd.html'),
+            guide=[('b.html', 'text', 'Old start'), ('d.html', 'index', 'Index'), ('a.html', 'other.chapter', 'Chapter')],
+        )
+        src = os.path.join(self.tdir, 'landmarks.epub')
+        with open(src, 'wb') as f:
+            f.write(epub.getvalue())
+
+        tdir = os.path.join(self.tdir, 'epub-input')
+        os.mkdir(tdir)
+        with CurrentDir(tdir), open(src, 'rb') as f:
+            opf = plugin_for_input_format('epub').convert(f, SimpleNamespace(), 'epub', DevNull(), {})
+            guide = {r.get('type'): (r.get('href'), r.get('title')) for r in OPF(opf, tdir).iterguide()}
+        self.assertEqual(
+            {
+                'toc': ('nav.html#toc', 'Contents'),
+                # Landmark types with no equivalent guide type use custom types
+                CUSTOM_GUIDE_TYPE_PREFIX + 'seriespage': ('b.html', 'Series'),
+                'text': ('c.html#h', 'Start'),
+                # Guide entries for types not in the landmarks are kept
+                'index': ('d.html', 'Index'),
+                'other.chapter': ('a.html', 'Chapter'),
+            },
+            guide,
+        )
+
+        # The landmarks survive conversion to EPUB 3
+        out = os.path.join(self.tdir, 'landmarks-out.epub')
+        plumber = Plumber(src, out, DevNull())
+        plumber.merge_ui_recommendations([('epub_version', '3', 3), ('no_default_epub_cover', True, 3)])
+        plumber.run()
+        c = get_container(out, tdir=os.path.join(self.tdir, 'landmarks-out'))
+        landmarks = [(e['type'], e['dest'], e['frag'], e['title']) for e in get_landmarks(c)]
+        self.assertEqual(
+            [
+                ('toc', 'nav.html', 'toc', 'Contents'),
+                ('seriespage', 'b.html', '', 'Series'),
+                ('bodymatter', 'c.html', 'h', 'Start'),
+                # Guide types not kept by conversion are dropped
+                ('index', 'd.html', '', 'Index'),
+            ],
+            landmarks,
+        )
+
+    def test_guide_reference_without_type(self):
+        # Guide references with no type must not cause a crash, see
+        # https://bugs.launchpad.net/bugs/2170400
+        from calibre.ebooks.conversion.plumber import Plumber, create_oebbook
+
+        c = self.create_epub([cmi('a.html'), cmi('b.html')], guide=[('b.html', 'toc', 'Contents')], ver=2)
+        for ref in c.opf_xpath('//opf:guide/opf:reference'):
+            ref.attrib.pop('type')
+        c.dirty(c.opf_name)
+        c.commit()
+        plumber = Plumber(c.name_to_abspath(c.opf_name), os.path.join(self.tdir, 'out.epub'), c.log)
+        plumber.setup_options()
+        oeb = create_oebbook(c.log, c.name_to_abspath(c.opf_name), plumber.opts)
+        self.assertNotIn(None, oeb.guide)
+
     def test_landmarks_detection(self):
         c = self.create_epub([cmi('xxx.html'), cmi('a.html')], guide=[('xxx.html#moo', 'x', 'XXX'), ('a.html', '', 'YYY')], ver=2)
         self.assertEqual(2, c.opf_version_parsed.major)
-        self.assertEqual([
-            {'dest':'xxx.html', 'frag':'moo', 'type':'x', 'title':'XXX'}, {'dest':'a.html', 'frag':'', 'type':'', 'title':'YYY'}
-        ], get_landmarks(c))
+        self.assertEqual(
+            [
+                {'dest': 'xxx.html', 'frag': 'moo', 'type': 'x', 'title': 'XXX'},
+                {'dest': 'a.html', 'frag': '', 'type': '', 'title': 'YYY'},
+            ],
+            get_landmarks(c),
+        )
         c = self.create_epub([cmi('xxx.html'), cmi('a.html')], ver=3)
         self.assertEqual(3, c.opf_version_parsed.major)
-        c.add_file('xxx/nav.html', b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-                   b'<body><nav epub:type="landmarks"><ol><li><a epub:type="x" href="../xxx.html#moo">XXX </a></li>'
-                   b'<li><a href="../a.html"> YYY </a></li>'
-                   b'</ol></nav></body></html>',
-                   process_manifest_item=lambda item:item.set('properties', 'nav'))
-        self.assertEqual([
-            {'dest':'xxx.html', 'frag':'moo', 'type':'x', 'title':'XXX'}, {'dest':'a.html', 'frag':'', 'type':'', 'title':'YYY'}
-        ], get_landmarks(c))
+        c.add_file(
+            'xxx/nav.html',
+            b'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+            b'<body><nav epub:type="landmarks"><ol><li><a epub:type="x" href="../xxx.html#moo">XXX </a></li>'
+            b'<li><a href="../a.html"> YYY </a></li>'
+            b'</ol></nav></body></html>',
+            process_manifest_item=lambda item: item.set('properties', 'nav'),
+        )
+        self.assertEqual(
+            [
+                {'dest': 'xxx.html', 'frag': 'moo', 'type': 'x', 'title': 'XXX'},
+                {'dest': 'a.html', 'frag': '', 'type': '', 'title': 'YYY'},
+            ],
+            get_landmarks(c),
+        )
+
+    def test_landmarks_are_kept_on_upgrade(self):
+        # Upgrading to EPUB 3 removes the guide, so its entries have to end
+        # up in the landmarks nav of the upgraded book, see commit_nav_toc()
+        body = b'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body></html>'
+        c = self.create_epub([cmi('xxx.html', body), cmi('a.html', body)], guide=[('xxx.html', 'cover', 'Cover'), ('a.html', 'text', 'Start')], ver=2)
+        self.assertEqual(2, c.opf_version_parsed.major)
+        upgrade_book(c, lambda *a: None)
+        self.assertEqual(3, c.opf_version_parsed.major)
+        self.assertFalse(c.opf_xpath('./opf:guide'))
+        self.assertEqual(
+            [
+                {'dest': 'xxx.html', 'frag': '', 'type': 'cover', 'title': 'Cover'},
+                # The guide types are translated to the EPUB 3 vocabulary
+                {'dest': 'a.html', 'frag': '', 'type': 'bodymatter', 'title': 'Start'},
+            ],
+            get_landmarks(c),
+        )
 
     def test_epub3_covers(self):
         # cover image
@@ -162,8 +353,11 @@ class Structure(BaseTest):
         self.assertEqual('a.html', next(c.spine_names)[0])
 
         # clean opf of all cover information
-        c = ce([cmi('c.jpg', b'z', 'cover-image'), cmi('c.html', b'', 'calibre:title-page'), cmi('d.html')],
-                             meta_cover='c.jpg', guide=[('c.jpg', 'cover', ''), ('d.html', 'cover', '')])
+        c = ce(
+            [cmi('c.jpg', b'z', 'cover-image'), cmi('c.html', b'', 'calibre:title-page'), cmi('d.html')],
+            meta_cover='c.jpg',
+            guide=[('c.jpg', 'cover', ''), ('d.html', 'cover', '')],
+        )
         self.assertEqual(set(clean_opf(c)), {'c.jpg', 'c.html', 'd.html'})
         self.assertFalse(c.opf_xpath('//*/@name'))
         self.assertFalse(c.opf_xpath('//*/@type'))
@@ -181,7 +375,7 @@ class Structure(BaseTest):
         self.assertEqual('c.jpg', find_cover_image(c))
         mark_as_cover(c, 'd.jpg')
         self.assertEqual('d.jpg', find_cover_image(c))
-        self.assertEqual({'cover':'d.jpg'}, c.guide_type_map)
+        self.assertEqual({'cover': 'd.jpg'}, c.guide_type_map)
 
         # title page
         c = ce([cmi('c.html'), cmi('a.html')])
@@ -193,12 +387,181 @@ class Structure(BaseTest):
         self.assertEqual('a.html', find_cover_page(c))
         self.assertEqual('a.html', next(c.spine_names)[0])
 
+    def test_mark_sentences(self):
+        from html5_parser import parse
+        from lxml import html
+
+        from calibre.ebooks.oeb.polish.tts import id_prefix, mark_sentences_in_html, unmark_sentences_in_html
+
+        def normalize_markup(root):
+            actual = html.tostring(root, encoding='unicode')
+            actual = actual[actual.find('<body') :]
+            actual = actual[: actual.rfind('</body>')]
+            return actual.replace(id_prefix, '')
+
+        for text, expected in reversed(
+            {
+                '<p id=1>hello cruel world': '<body><p id="1"><span id="1">hello cruel world</span></p>',
+                '<p>hello <b>cruel</b> world': '<body><p><span id="1">hello <b>cruel</b> world</span></p>',
+                '<p>Yes, please. Hello <b>cruel</b> world.': '<body><p><span id="1">Yes, please. </span><span id="2">Hello <b>cruel</b> world.</span></p>',
+                '<p>Hello <b>cruel</b> <i>world.  </i>': '<body><p><span id="1">Hello <b>cruel</b> <i>world.  </i></span></p>',
+                '<p>Yes, <b>please.</b> Well done! Bravissima! ': '<body><p><span id="1">Yes, <b>please.</b> </span>'
+                '<span id="2">Well done! </span><span id="3">Bravissima! </span></p>',
+                '<p>Yes, <b>please.</b> Well <i>done! </i>Bravissima! ': '<body><p><span id="1">Yes, <b>please.</b> </span>'
+                '<span id="2">Well <i>done! </i></span><span id="3">Bravissima! </span></p>',
+                '<p><i>Hello</i>, world! Good day to you': '<body><p><span id="1"><i>Hello</i>, world! </span><span id="2">Good day to you</span></p>',
+                '<p><i>Hello, world! </i>Good day to you': '<body><p><i id="1">Hello, world! </i><span id="2">Good day to you</span></p>',
+                '<p><i>Hello, </i><b>world!</b>Good day to you': '<body><p><span id="1"><i>Hello, </i><b>world!</b></span>'
+                '<span id="2">Good day to you</span></p>',
+                '<p><i>Hello, </i><b>world</b>! Good day to you': '<body><p><span id="1"><i>Hello, </i><b>world</b>! </span>'
+                '<span id="2">Good day to you</span></p>',
+                '<p>Hello, <span lang="fr">world!': '<body><p><span id="1">Hello, </span><span lang="fr"><span id="2">world!</span></span></p>',
+                '<p>Hello, <span data-calibre-tts="moose">world!': '<body><p><span id="1">Hello, </span>'
+                '<span data-calibre-tts="moose"><span id="2">world!</span></span></p>',
+                '<p>One<p>Two': '<body><p><span id="1">One</span></p><p><span id="2">Two</span></p>',
+                '<div><p>something': '<body><div><p><span id="1">something</span></p></div>',
+                '<p>One</p> Two. Three <p>Four': '<body><p><span id="1">One</span></p><span id="2"> Two. </span>'
+                '<span id="3">Three </span><p><span id="4">Four</span></p>',
+                '<p>Here is some <b>bold, </b><i>italic, </i><u>underline, </u> text.': '<body>'
+                '<p><span id="1">Here is some <b>bold, </b><i>italic, </i><u>underline, </u> text.</span></p>',
+                '<p>A sentence wrapped\nonto multiple lines.': '<body><p><span id="1">A sentence wrapped\nonto multiple lines.</span></p>',
+            }.items()
+        ):
+            root = parse(text, namespace_elements=True)
+            orig = normalize_markup(root)
+            sentences = mark_sentences_in_html(root)
+            ids = tuple(int(s.elem_id[len(id_prefix) :]) for s in sentences)
+            self.assertEqual(len(ids), ids[-1])
+            marked = normalize_markup(root)
+            self.assertEqual(expected, marked)
+            unmark_sentences_in_html(root)
+            self.assertEqual(orig, normalize_markup(root), f'Unmarking failed for {marked}')
+        sentences = mark_sentences_in_html(parse('<p lang="en">Hello, <span lang="fr">world!'))
+        self.assertEqual(tuple(s.lang for s in sentences), ('eng', 'fra'))
+
+    def test_check_skipped_rules(self):
+        from calibre.ebooks.oeb.polish.check.css import CSSError, CSSParseError, stylelint_rules_from_skipped_rules
+        from calibre.ebooks.oeb.polish.check.main import remove_skipped
+        from calibre.ebooks.oeb.polish.check.parsing import DuplicateId, InvalidId, XMLParseError, check_ids
+
+        c = self.create_epub([
+            cmi('a.html', '<html xmlns="http://www.w3.org/1999/xhtml"><body><p id="1x">a</p><p id="d"/><p id="d"/></body></html>'),
+        ])
+        errors = check_ids(c)
+        self.assertEqual({type(e) for e in errors}, {InvalidId, DuplicateId})
+        self.assertEqual({e.rule_id for e in errors}, {'InvalidId', 'DuplicateId'})
+        self.assertEqual(next(e for e in errors if isinstance(e, InvalidId)).rule_name, InvalidId.RULE_NAME)
+        remaining = remove_skipped(errors, frozenset({'InvalidId'}))
+        self.assertEqual([type(e) for e in remaining], [DuplicateId])
+
+        css_err = CSSError('x', 'a.css')
+        css_err.css_rule_id = 'block-no-empty'
+        self.assertEqual(css_err.rule_id, 'css:block-no-empty')
+        self.assertEqual(stylelint_rules_from_skipped_rules({'css:block-no-empty', 'InvalidId', 'css:a'}), ('a', 'block-no-empty'))
+
+        # parse errors can never be skipped
+        parse_errors = [XMLParseError('x', 'a.html'), CSSParseError('x', 'a.css')]
+        self.assertFalse(any(e.can_be_skipped for e in parse_errors))
+        self.assertEqual(remove_skipped(parse_errors, frozenset(e.rule_id for e in parse_errors)), parse_errors)
+
+    def test_invalid_id_fix(self):
+        from calibre.ebooks.oeb.polish.check.main import fix_errors
+        from calibre.ebooks.oeb.polish.check.parsing import InvalidId, check_ids, make_valid_id
+        from calibre.ebooks.oeb.polish.css import rename_ids_in_selector
+
+        self.assertEqual(make_valid_id('_x', set()), 'id_x')
+        self.assertEqual(make_valid_id('1 a', {'id1_a'}), 'id1_a-2')
+        self.assertEqual(make_valid_id('a\u00e9', set()), 'a_')
+        id_map = {'_x': 'id_x'}
+        for selector, expected in {
+            '#_x': '#id_x',
+            'p#_x:hover > #_y': 'p#id_x:hover > #_y',
+            '#\\5f x, #_xy': '#id_x, #_xy',
+            ':not(#_x)': ':not(#id_x)',
+            '[id="_x"], [ id = _x ], [id~="_x"], [data-a="_x"]': '[id="id_x"], [ id = "id_x" ], [id~="_x"], [data-a="_x"]',
+            '#_x.c /* c */ i': '#id_x.c /* c */ i',
+        }.items():
+            self.assertEqual(rename_ids_in_selector(selector, id_map), expected)
+
+        def html(body, head=''):
+            return f'''<html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" href="style.css"/>{head}</head><body>{body}</body></html>'''
+
+        c = self.create_epub([
+            cmi(
+                'a.html',
+                html(
+                    '<p id="_x">a</p><a href="#_x">l</a><a href="b.html#_x">l</a>'
+                    '<div aria-labelledby="_x  _y" aria-describedby="_x"><label for="_x">l</label></div>',
+                    '<style>#_x { margin: 0 }</style>',
+                ),
+            ),
+            cmi('b.html', html('<p id="_x">b</p><a href="a.html#_x">l</a>')),
+            cmi('c.html', html('<p id="id_x">c</p><p style="color: red">x</p>')),
+            cmi('style.css', '#_x { color: red }\n@media screen { p#_x, [id="_x"] { font-weight: bold } }\n#id_x { color: blue }'),
+        ])
+        errors = [e for e in check_ids(c) if isinstance(e, InvalidId)]
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(fix_errors(c, errors))
+        self.assertFalse([e for e in check_ids(c) if isinstance(e, InvalidId)])
+        nid = 'id_x-2'
+        for name in 'ab':
+            root = c.parsed(f'{name}.html')
+            self.assertEqual(root.xpath('//*[local-name()="p"]/@id'), [nid])
+        self.assertEqual(c.parsed('c.html').xpath('//*[local-name()="p"]/@id'), ['id_x'])
+        self.assertEqual(c.parsed('a.html').xpath('//*[local-name()="a"]/@href'), [f'#{nid}', f'b.html#{nid}'])
+        self.assertEqual(c.parsed('b.html').xpath('//*[local-name()="a"]/@href'), [f'a.html#{nid}'])
+        self.assertIn(f'#{nid}', c.parsed('a.html').xpath('//*[local-name()="style"]')[0].text)
+        sheet = c.parsed('style.css')
+        self.assertEqual(sheet.cssRules[0].selectorText, f'#{nid}')
+        self.assertEqual(sheet.cssRules[1].cssRules[0].selectorText, f'p#{nid}, [id="{nid}"]')
+        self.assertEqual(sheet.cssRules[2].selectorText, '#id_x')
+        root = c.parsed('a.html')
+        self.assertEqual(root.xpath('//*/@aria-labelledby'), [f'{nid} _y'])
+        self.assertEqual(root.xpath('//*/@aria-describedby'), [nid])
+        self.assertEqual(root.xpath('//*/@for'), [nid])
+
+    def test_dangling_id_reference(self):
+        from calibre.ebooks.oeb.polish.check.main import fix_errors
+        from calibre.ebooks.oeb.polish.check.parsing import DanglingIdReference, check_ids
+
+        def html(body):
+            return f'<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body>{body}</body></html>'
+
+        c = self.create_epub([
+            cmi(
+                'a.html',
+                html(
+                    '<h1 id="h">h</h1><section aria-labelledby="h x">s</section>\n<p aria-describedby="x">p</p>'
+                    '<table><tr><th id="c">c</th><td headers="c">1</td><td headers="y">2</td></tr></table>'
+                    '<label for="z">l</label><a href="#q" data-x="w">a</a>'
+                ),
+            ),
+            cmi('b.html', html('<p id="x">b</p>')),
+        ])
+
+        def dangling():
+            return {e.missing_id: e for e in check_ids(c) if isinstance(e, DanglingIdReference)}
+
+        errors = dangling()
+        self.assertEqual(set(errors), {'x', 'y', 'z'})
+        self.assertEqual(errors['x'].name, 'a.html')
+        self.assertEqual(len(errors['x'].all_locations), 2)
+        self.assertTrue(fix_errors(c, list(errors.values())))
+        self.assertFalse(dangling())
+        root = c.parsed('a.html')
+        self.assertEqual(root.xpath('//*/@aria-labelledby'), ['h'])
+        self.assertFalse(root.xpath('//*/@aria-describedby'))
+        self.assertEqual(root.xpath('//*/@headers'), ['c'])
+        self.assertFalse(root.xpath('//*/@for'))
+
 
 def find_tests():
     import unittest
+
     return unittest.defaultTestLoader.loadTestsFromTestCase(Structure)
 
 
 def run_tests():
     from calibre.utils.run_tests import run_tests
+
     run_tests(find_tests)

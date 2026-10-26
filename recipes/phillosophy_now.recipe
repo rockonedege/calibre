@@ -1,10 +1,12 @@
-from calibre.web.feeds.news import BasicNewsRecipe, classes
-from calibre import browser
+#!/usr/bin/env python
+# vim:fileencoding=utf-8
 from collections import OrderedDict
+
+from calibre import browser
+from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
 class PhilosophyNow(BasicNewsRecipe):
-
     title = 'Philosophy Now'
     __author__ = 'unkn0wn'
     description = '''Philosophy Now is a lively magazine for everyone
@@ -21,23 +23,37 @@ class PhilosophyNow(BasicNewsRecipe):
     remove_attributes = ['height', 'width', 'style']
     encoding = 'utf-8'
     ignore_duplicate_articles = {'url'}
+    masthead_url = 'https://philosophynow.org/media/images/regulars/logoStructuredData.png'
 
     keep_only_tags = [classes('article_page')]
-    remove_tags = [dict(name='div', attrs={'id':'welcome_box'})]
+    remove_tags = [dict(name='div', attrs={'id': 'welcome_box'})]
+    extra_css = '''
+        img {display:block; margin:0 auto;}
+        .articleImageCaption { font-size:small; text-align:center; }
+        em, blockquote { color:#202020; }
+    '''
+
+    recipe_specific_options = {'issue': {'short': 'Enter the Issue Number you want to download ', 'long': 'For example, 136'}}
 
     def parse_index(self):
         soup = self.index_to_soup('https://philosophynow.org/')
         div = soup.find('div', attrs={'id': 'aside_issue_cover'})
-        url = div.find('a', href=True)['href']
-        for issue in div.findAll('div', attrs={'id':'aside_issue_text'}):
-            self.log('Downloading issue:', self.tag_to_string(issue).strip())
+        url = 'https://philosophynow.org' + div.find('a', href=True)['href']
+
+        d = self.recipe_specific_options.get('issue')
+        if d and isinstance(d, str):
+            url = 'https://philosophynow.org/issues/' + d
+
+        soup = self.index_to_soup(url)
+
+        div = soup.find('div', attrs={'id': 'issue_contents_cover_div'})
         cov_url = div.find('img', src=True)['src']
         self.cover_url = 'https://philosophynow.org' + cov_url
-        soup = self.index_to_soup('https://philosophynow.org' + url)
+        self.timefmt = ' [' + self.tag_to_string(soup.find('h1')) + ']'
 
         feeds = OrderedDict()
 
-        for h2 in soup.findAll('h2', attrs={'class':'article_list_title'}):
+        for h2 in soup.findAll('h2', attrs={'class': 'article_list_title'}):
             articles = []
             a = h2.find('a', href=True)
             url = a['href']
@@ -51,16 +67,13 @@ class PhilosophyNow(BasicNewsRecipe):
             self.log('\t', title)
             self.log('\t', desc)
             self.log('\t\t', url)
-            articles.append({
-                'title': title,
-                'url': url,
-                'description': desc})
+            articles.append({'title': title, 'url': url, 'description': desc})
 
             if articles:
                 if section_title not in feeds:
                     feeds[section_title] = []
                 feeds[section_title] += articles
-        ans = [(key, val) for key, val in feeds.items()]
+        ans = list(feeds.items())
         return ans
 
     # PN changes the content it delivers based on cookies, so the
@@ -72,7 +85,7 @@ class PhilosophyNow(BasicNewsRecipe):
         return self.get_browser()
 
     def open_novisit(self, *args, **kwargs):
-        br = browser()
+        br = browser(verify_ssl_certificates=False)
         return br.open_novisit(*args, **kwargs)
 
     open = open_novisit

@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-from calibre.db.delete_service import delete_service
 from calibre.srv.changes import formats_removed
+from calibre.utils.localization import _
 
 readonly = False
 version = 0  # change this if you change signature of implementation()
@@ -11,9 +10,8 @@ version = 0  # change this if you change signature of implementation()
 
 def implementation(db, notify_changes, book_id, fmt):
     is_remote = notify_changes is not None
-    fmt_map = {book_id: (fmt, )}
+    fmt_map = {book_id: (fmt,)}
     db.remove_formats(fmt_map)
-    delete_service().wait()
     if is_remote:
         notify_changes(formats_removed(fmt_map))
 

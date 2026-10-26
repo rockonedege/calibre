@@ -1,70 +1,69 @@
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
 
 import io
 import os
 
-from calibre.customize.conversion import OutputFormatPlugin, \
-    OptionRecommendation
+from calibre.customize.conversion import OptionRecommendation, OutputFormatPlugin
 from calibre.ptempfile import TemporaryDirectory
+from calibre.utils.localization import _
 
 
 class HTMLZOutput(OutputFormatPlugin):
-
     name = 'HTMLZ Output'
     author = 'John Schember'
     file_type = 'htmlz'
     commit_name = 'htmlz_output'
     ui_data = {
-            'css_choices': {
-                'class': _('Use CSS classes'),
-                'inline': _('Use the style attribute'),
-                'tag': _('Use HTML tags wherever possible')
-            },
-            'sheet_choices': {
-                'external': _('Use an external CSS file'),
-                'inline': _('Use a <style> tag in the HTML file')
-            }
+        'css_choices': {
+            'class': _('Use CSS classes'),
+            'inline': _('Use the style attribute'),
+            'tag': _('Use HTML tags wherever possible'),
+        },
+        'sheet_choices': {'external': _('Use an external CSS file'), 'inline': _('Use a <style> tag in the HTML file')},
     }
 
     options = {
-        OptionRecommendation(name='htmlz_css_type', recommended_value='class',
+        OptionRecommendation(
+            name='htmlz_css_type',
+            recommended_value='class',
             level=OptionRecommendation.LOW,
             choices=list(ui_data['css_choices']),
-            help=_('Specify the handling of CSS. Default is class.\n'
-                   'class: {class}\n'
-                   'inline: {inline}\n'
-                   'tag: {tag}'
-            ).format(**ui_data['css_choices'])),
-        OptionRecommendation(name='htmlz_class_style', recommended_value='external',
+            help=_('Specify the handling of CSS. Default is class.\nclass: {class}\ninline: {inline}\ntag: {tag}').format(**ui_data['css_choices']),
+        ),
+        OptionRecommendation(
+            name='htmlz_class_style',
+            recommended_value='external',
             level=OptionRecommendation.LOW,
             choices=list(ui_data['sheet_choices']),
-            help=_('How to handle the CSS when using css-type = \'class\'.\n'
-                   'Default is external.\n'
-                   'external: {external}\n'
-                   'inline: {inline}'
-            ).format(**ui_data['sheet_choices'])),
-        OptionRecommendation(name='htmlz_title_filename',
-            recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('If set this option causes the file name of the HTML file'
-                ' inside the HTMLZ archive to be based on the book title.')
+            help=_("How to handle the CSS when using css-type = 'class'.\nDefault is external.\nexternal: {external}\ninline: {inline}").format(
+                **ui_data['sheet_choices']
             ),
+        ),
+        OptionRecommendation(
+            name='htmlz_title_filename',
+            recommended_value=False,
+            level=OptionRecommendation.LOW,
+            help=_('If set this option causes the file name of the HTML file inside the HTMLZ archive to be based on the book title.'),
+        ),
     }
 
-    def convert(self, oeb_book, output_path, input_plugin, opts, log):
+    def convert(self, oeb_book, output, input_plugin, opts, log):
+        output_path = output
         from lxml import etree
-        from calibre.ebooks.oeb.base import OEB_IMAGES, SVG_MIME
+
         from calibre.ebooks.metadata.opf2 import OPF, metadata_to_opf
-        from calibre.utils.zipfile import ZipFile
+        from calibre.ebooks.oeb.base import OEB_IMAGES, SVG_MIME
         from calibre.utils.filenames import ascii_filename
+        from calibre.utils.zipfile import ZipFile
 
         # HTML
         if opts.htmlz_css_type == 'inline':
             from calibre.ebooks.htmlz.oeb2html import OEB2HTMLInlineCSSizer
+
             OEB2HTMLizer = OEB2HTMLInlineCSSizer
         elif opts.htmlz_css_type == 'tag':
             from calibre.ebooks.htmlz.oeb2html import OEB2HTMLNoCSSizer
+
             OEB2HTMLizer = OEB2HTMLNoCSSizer
         else:
             from calibre.ebooks.htmlz.oeb2html import OEB2HTMLClassCSSizer as OEB2HTMLizer
@@ -76,8 +75,9 @@ class HTMLZOutput(OutputFormatPlugin):
             fname = 'index'
             if opts.htmlz_title_filename:
                 from calibre.utils.filenames import shorten_components_to
+
                 fname = shorten_components_to(100, (ascii_filename(str(oeb_book.metadata.title[0])),))[0]
-            with open(os.path.join(tdir, fname+'.html'), 'wb') as tf:
+            with open(os.path.join(tdir, fname + '.html'), 'wb') as tf:
                 if isinstance(html, str):
                     html = html.encode('utf-8')
                 tf.write(html)
@@ -101,6 +101,15 @@ class HTMLZOutput(OutputFormatPlugin):
                         fname = os.path.join(tdir, 'images', images[item.href])
                         with open(fname, 'wb') as img:
                             img.write(data)
+            # Fonts
+            if htmlizer.fonts:
+                os.makedirs(os.path.join(tdir, 'fonts'), exist_ok=True)
+                for item in oeb_book.manifest:
+                    if item.href in htmlizer.fonts:
+                        data = item.data
+                        fname = os.path.join(tdir, 'fonts', htmlizer.fonts[item.href])
+                        with open(fname, 'wb') as f:
+                            f.write(data)
 
             # Cover
             cover_path = None
@@ -111,12 +120,14 @@ class HTMLZOutput(OutputFormatPlugin):
                     cover_data = oeb_book.guide[term].item.data
                 if cover_data:
                     from calibre.utils.img import save_cover_data_to
+
                     cover_path = os.path.join(tdir, 'cover.jpg')
-                    with lopen(cover_path, 'w') as cf:
+                    with open(cover_path, 'w') as cf:
                         cf.write('')
                     save_cover_data_to(cover_data, cover_path)
-            except:
+            except Exception:
                 import traceback
+
                 traceback.print_exc()
 
             # Metadata

@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import ctypes
-from ctypes import windll
-from ctypes import wintypes
-from collections import namedtuple
 from contextlib import contextmanager
+from ctypes import windll, wintypes
+from typing import NamedTuple
 
 # Wraps (part of) the IPHelper API, useful to enumerate the network routes and
 # adapters on the local machine
@@ -14,10 +12,11 @@ from contextlib import contextmanager
 
 class GUID(ctypes.Structure):
     _fields_ = [
-        ("data1", wintypes.DWORD),
-        ("data2", wintypes.WORD),
-        ("data3", wintypes.WORD),
-        ("data4", wintypes.BYTE * 8)]
+        ('data1', wintypes.DWORD),
+        ('data2', wintypes.WORD),
+        ('data3', wintypes.WORD),
+        ('data4', wintypes.BYTE * 8),
+    ]
 
     def __init__(self, l, w1, w2, b1, b2, b3, b4, b5, b6, b7, b8):
         self.data1 = l
@@ -164,14 +163,10 @@ class IP_ADAPTER_ADDRESSES(ctypes.Structure):
         ('Union1', IP_ADAPTER_ADDRESSES_Union1),
         ('Next', wintypes.LPVOID),
         ('AdapterName', ctypes.c_char_p),
-        ('FirstUnicastAddress',
-         ctypes.POINTER(IP_ADAPTER_UNICAST_ADDRESS)),
-        ('FirstAnycastAddress',
-         ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
-        ('FirstMulticastAddress',
-         ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
-        ('FirstDnsServerAddress',
-         ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
+        ('FirstUnicastAddress', ctypes.POINTER(IP_ADAPTER_UNICAST_ADDRESS)),
+        ('FirstAnycastAddress', ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
+        ('FirstMulticastAddress', ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
+        ('FirstDnsServerAddress', ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
         ('DnsSuffix', wintypes.LPWSTR),
         ('Description', wintypes.LPWSTR),
         ('FriendlyName', wintypes.LPWSTR),
@@ -187,10 +182,8 @@ class IP_ADAPTER_ADDRESSES(ctypes.Structure):
         # Vista and later
         ('TransmitLinkSpeed', wintypes.ULARGE_INTEGER),
         ('ReceiveLinkSpeed', wintypes.ULARGE_INTEGER),
-        ('FirstWinsServerAddress',
-         ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
-        ('FirstGatewayAddress',
-         ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
+        ('FirstWinsServerAddress', ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
+        ('FirstGatewayAddress', ctypes.POINTER(IP_ADAPTER_DNS_SERVER_ADDRESS)),
         ('Ipv4Metric', wintypes.ULONG),
         ('Ipv6Metric', wintypes.ULONG),
         ('Luid', NET_LUID_LH),
@@ -203,7 +196,7 @@ class IP_ADAPTER_ADDRESSES(ctypes.Structure):
         ('Dhcpv6ClientDuid', ctypes.c_ubyte * MAX_DHCPV6_DUID_LENGTH),
         ('Dhcpv6ClientDuidLength', wintypes.ULONG),
         ('Dhcpv6Iaid', wintypes.ULONG),
-        # Vista SP1 and later, so we comment it out as we dont need it
+        # Vista SP1 and later, so we comment it out as we don't need it
         # ('FirstDnsSuffix', ctypes.POINTER(IP_ADAPTER_DNS_SUFFIX)),
     ]
 
@@ -223,29 +216,26 @@ class Win32_MIB_IPFORWARDROW(ctypes.Structure):
         ('dwForwardMetric2', wintypes.DWORD),
         ('dwForwardMetric3', wintypes.DWORD),
         ('dwForwardMetric4', wintypes.DWORD),
-        ('dwForwardMetric5', wintypes.DWORD)
+        ('dwForwardMetric5', wintypes.DWORD),
     ]
 
 
 class Win32_MIB_IPFORWARDTABLE(ctypes.Structure):
-    _fields_ = [
-        ('dwNumEntries', wintypes.DWORD),
-        ('table', Win32_MIB_IPFORWARDROW * 1)
-    ]
+    _fields_ = [('dwNumEntries', wintypes.DWORD), ('table', Win32_MIB_IPFORWARDROW * 1)]
 
 
 GetAdaptersAddresses = windll.Iphlpapi.GetAdaptersAddresses
 GetAdaptersAddresses.argtypes = [
-    wintypes.ULONG, wintypes.ULONG, wintypes.LPVOID,
+    wintypes.ULONG,
+    wintypes.ULONG,
+    wintypes.LPVOID,
     ctypes.POINTER(IP_ADAPTER_ADDRESSES),
-    ctypes.POINTER(wintypes.ULONG)]
+    ctypes.POINTER(wintypes.ULONG),
+]
 GetAdaptersAddresses.restype = wintypes.ULONG
 
 GetIpForwardTable = windll.Iphlpapi.GetIpForwardTable
-GetIpForwardTable.argtypes = [
-    ctypes.POINTER(Win32_MIB_IPFORWARDTABLE),
-    ctypes.POINTER(wintypes.ULONG),
-    wintypes.BOOL]
+GetIpForwardTable.argtypes = [ctypes.POINTER(Win32_MIB_IPFORWARDTABLE), ctypes.POINTER(wintypes.ULONG), wintypes.BOOL]
 GetIpForwardTable.restype = wintypes.DWORD
 
 GetProcessHeap = windll.kernel32.GetProcessHeap
@@ -293,7 +283,7 @@ def _get_forward_table():
                 yield p_forward_table
                 break
             else:
-                raise OSError('Unable to get IP forward table. Error: %s' % err)
+                raise OSError(f'Unable to get IP forward table. Error: {err}')
         if p_forward_table is None:
             raise OSError('Failed to get IP routing table, table appears to be changing rapidly')
     finally:
@@ -321,7 +311,7 @@ def _get_adapters():
                 buf = _heap_alloc(heap, size)
                 addresses = ctypes.cast(buf, ctypes.POINTER(IP_ADAPTER_ADDRESSES))
             else:
-                raise OSError('Failed to determine size for adapters table with error: %s' % err)
+                raise OSError(f'Failed to determine size for adapters table with error: {err}')
         if addresses is None:
             raise OSError('Failed to get adapter addresses, table appears to be changing rapidly')
     finally:
@@ -330,65 +320,80 @@ def _get_adapters():
             addresses = None
 
 
-Adapter = namedtuple('Adapter', 'name if_index if_index6 friendly_name status transmit_speed receive_speed')
+class Adapter(NamedTuple):
+    name: str
+    if_index: bool
+    if_index6: bool
+    friendly_name: str
+    status: str
+    transmit_speed: int
+    receive_speed: int
 
 
 def adapters():
-    ''' A list of adapters on this machine '''
+    """A list of adapters on this machine"""
     ans = []
-    smap = {1:'up', 2:'down', 3:'testing', 4:'unknown', 5:'dormant', 6:'not-present', 7:'lower-layer-down'}
+    smap = {1: 'up', 2: 'down', 3: 'testing', 4: 'unknown', 5: 'dormant', 6: 'not-present', 7: 'lower-layer-down'}
     with _get_adapters() as p_adapters_list:
         adapter = p_adapters_list
         while adapter:
             adapter = adapter.contents
             if not adapter:
                 break
-            ans.append(Adapter(
-                name=adapter.AdapterName.decode(),
-                if_index=adapter.Union1.Struct1.IfIndex,
-                if_index6=adapter.Ipv6IfIndex,
-                friendly_name=adapter.FriendlyName,
-                status=smap.get(adapter.OperStatus, 'unknown'),
-                transmit_speed=adapter.TransmitLinkSpeed,
-                receive_speed=adapter.ReceiveLinkSpeed
-            ))
+            ans.append(
+                Adapter(
+                    name=adapter.AdapterName.decode(),
+                    if_index=adapter.Union1.Struct1.IfIndex,
+                    if_index6=adapter.Ipv6IfIndex,
+                    friendly_name=adapter.FriendlyName,
+                    status=smap.get(adapter.OperStatus, 'unknown'),
+                    transmit_speed=adapter.TransmitLinkSpeed,
+                    receive_speed=adapter.ReceiveLinkSpeed,
+                )
+            )
             adapter = ctypes.cast(adapter.Next, ctypes.POINTER(IP_ADAPTER_ADDRESSES))
     return ans
 
 
-Route = namedtuple('Route', 'destination gateway netmask interface metric flags')
+class Route(NamedTuple):
+    destination: str
+    gateway: str
+    netmask: str
+    interface: str | None
+    metric: int
+    flags: int
 
 
 def routes():
-    ''' A list of routes on this machine '''
+    """A list of routes on this machine"""
     ans = []
-    adapter_map = {a.if_index:a.name for a in adapters()}
+    adapter_map = {a.if_index: a.name for a in adapters()}
     with _get_forward_table() as p_forward_table:
         if p_forward_table is None:
             return ans
         forward_table = p_forward_table.contents
-        table = ctypes.cast(
-            ctypes.addressof(forward_table.table),
-            ctypes.POINTER(Win32_MIB_IPFORWARDROW * forward_table.dwNumEntries)
-        ).contents
+        table = ctypes.cast(ctypes.addressof(forward_table.table), ctypes.POINTER(Win32_MIB_IPFORWARDROW * int(forward_table.dwNumEntries))).contents
 
         for row in table:
             destination = Ws2_32.inet_ntoa(row.dwForwardDest).decode()
             netmask = Ws2_32.inet_ntoa(row.dwForwardMask).decode()
             gateway = Ws2_32.inet_ntoa(row.dwForwardNextHop).decode()
-            ans.append(Route(
-                destination=destination,
-                gateway=gateway,
-                netmask=netmask,
-                interface=adapter_map.get(row.dwForwardIfIndex),
-                metric=row.dwForwardMetric1,
-                flags=row.dwForwardProto
-            ))
+            ans.append(
+                Route(
+                    destination=destination,
+                    gateway=gateway,
+                    netmask=netmask,
+                    interface=adapter_map.get(row.dwForwardIfIndex),
+                    metric=row.dwForwardMetric1,
+                    flags=row.dwForwardProto,
+                )
+            )
 
     return ans
 
 
 if __name__ == '__main__':
     from pprint import pprint
+
     pprint(adapters())
     pprint(routes())

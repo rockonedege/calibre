@@ -1,30 +1,29 @@
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
 
-'''
+"""
 Transform OEB content into a single (more or less) HTML file.
-'''
+"""
 
 import os
 import re
-
 from functools import partial
+from urllib.parse import urldefrag
+
+from css_parser import replaceUrls
 from lxml import html
 
 from calibre import prepare_string_for_xml
-from calibre.ebooks.oeb.base import (
-    XHTML, XHTML_NS, SVG_NS, barename, namespace, OEB_IMAGES, XLINK, rewrite_links, urlnormalize)
+from calibre.ebooks.oeb.base import OEB_IMAGES, SVG_NS, XHTML, XHTML_NS, XLINK, barename, namespace, rewrite_idrefs, rewrite_links, urlnormalize
 from calibre.ebooks.oeb.stylizer import Stylizer
+from calibre.utils.localization import _
 from calibre.utils.logging import default_log
-from polyglot.builtins import string_or_bytes, as_unicode
-from polyglot.urllib import urldefrag
+from polyglot.builtins import as_unicode
 
 SELF_CLOSING_TAGS = {'area', 'base', 'basefont', 'br', 'hr', 'input', 'img', 'link', 'meta'}
 
 
 class OEB2HTML:
-    '''
+    """
     Base class. All subclasses should implement dump_text to actually transform
     content. Also, callers should use oeb2html to get the transformed html.
     links and images can be retrieved after calling oeb2html to get the mapping
@@ -32,12 +31,13 @@ class OEB2HTML:
     Images will always be referenced as if they are in an images folder.
 
     Use get_css to get the CSS classes for the OEB document as a string.
-    '''
+    """
 
     def __init__(self, log=None):
         self.log = default_log if log is None else log
         self.links = {}
         self.images = {}
+        self.fonts = {}
 
     def oeb2html(self, oeb_book, opts):
         self.log.info('Converting OEB book to HTML...')
@@ -48,6 +48,7 @@ class OEB2HTML:
             self.book_title = _('Unknown')
         self.links = {}
         self.images = {}
+        self.fonts = {}
         self.base_hrefs = [item.href for item in oeb_book.spine]
         self.map_resources(oeb_book)
 
@@ -55,11 +56,13 @@ class OEB2HTML:
 
     def mlize_spine(self, oeb_book):
         output = [
-            '<html><head><meta http-equiv="Content-Type" content="text/html;charset=utf-8" /><title>%s</title></head><body>' % (
-                prepare_string_for_xml(self.book_title))
+            (
+                '<html><head><meta http-equiv="Content-Type" content="text/html;charset=utf-8" /><title>'
+                f'{prepare_string_for_xml(self.book_title)}</title></head><body>'
+            )
         ]
         for item in oeb_book.spine:
-            self.log.debug('Converting %s to HTML...' % item.href)
+            self.log.debug(f'Converting {item.href} to HTML...')
             self.rewrite_ids(item.data, item)
             rewrite_links(item.data, partial(self.rewrite_link, page=item))
             stylizer = Stylizer(item.data, item.href, oeb_book, self.opts)
@@ -73,46 +76,58 @@ class OEB2HTML:
 
     def get_link_id(self, href, id=''):
         if id:
-            href += '#%s' % id
+            href += f'#{id}'
         if href not in self.links:
-            self.links[href] = '#calibre_link-%s' % len(self.links.keys())
+            self.links[href] = f'#calibre_link-{len(self.links.keys())}'
         return self.links[href]
 
     def map_resources(self, oeb_book):
-        for item in oeb_book.manifest:
-            if item.media_type in OEB_IMAGES:
-                if item.href not in self.images:
-                    ext = os.path.splitext(item.href)[1]
-                    fname = f'{len(self.images)}{ext}'
-                    fname = fname.zfill(10)
-                    self.images[item.href] = fname
-            if item in oeb_book.spine:
-                self.get_link_id(item.href)
-                root = item.data.find(XHTML('body'))
-                link_attrs = set(html.defs.link_attrs)
-                link_attrs.add(XLINK('href'))
-                for el in root.iter():
-                    attribs = el.attrib
-                    try:
-                        if not isinstance(el.tag, string_or_bytes):
-                            continue
-                    except:
+        from operator import attrgetter
+
+        images = sorted((item for item in oeb_book.manifest if item.media_type in OEB_IMAGES), key=attrgetter('href'))
+        for item in images:
+            if item.href not in self.images:
+                ext = os.path.splitext(item.href)[1]
+                fname = f'{len(self.images):06d}{ext}'
+                self.images[item.href] = fname
+        from calibre.ebooks.oeb.polish.utils import OEB_FONTS
+
+        fonts = sorted((item for item in oeb_book.manifest if item.media_type in OEB_FONTS), key=attrgetter('href'))
+        for item in fonts:
+            if item.href not in self.fonts:
+                ext = os.path.splitext(item.href)[1]
+                fname = f'{len(self.fonts):06d}{ext}'
+                self.fonts[item.href] = fname
+
+        for item in oeb_book.spine:
+            self.get_link_id(item.href)
+            root = item.data.find(XHTML('body'))
+            link_attrs = set(html.defs.link_attrs)  # type: ignore
+            link_attrs.add(XLINK('href'))
+            for el in root.iter():
+                attribs = el.attrib
+                try:
+                    if not isinstance(el.tag, (str, bytes)):
                         continue
-                    for attr in attribs:
-                        if attr in link_attrs:
-                            href = item.abshref(attribs[attr])
-                            href, id = urldefrag(href)
-                            if href in self.base_hrefs:
-                                self.get_link_id(href, id)
+                except Exception:
+                    continue
+                for attr in attribs:
+                    if attr in link_attrs:
+                        href = item.abshref(attribs[attr])
+                        href, id = urldefrag(href)
+                        if href in self.base_hrefs:
+                            self.get_link_id(href, id)
 
     def rewrite_link(self, url, page=None):
         if not page:
             return url
         abs_url = page.abshref(urlnormalize(url))
         if abs_url in self.images:
-            return 'images/%s' % self.images[abs_url]
+            return f'images/{self.images[abs_url]}'
         if abs_url in self.links:
             return self.links[abs_url]
+        if abs_url in self.fonts:
+            return f'fonts/{self.fonts[abs_url]}'
         return url
 
     def rewrite_ids(self, root, page):
@@ -126,11 +141,13 @@ class OEB2HTML:
                 continue
             if 'id' in el.attrib:
                 el.attrib['id'] = self.get_link_id(page.href, el.attrib['id'])[1:]
+        rewrite_idrefs(root, lambda eid: self.links.get(f'{page.href}#{eid}', '#' + eid)[1:])
 
     def get_css(self, oeb_book):
         css = ''
         for item in oeb_book.manifest:
-            if item.media_type == 'text/css':
+            if hasattr(item.data, 'cssText'):
+                replaceUrls(item.data, partial(self.rewrite_link, page=item))
                 css += as_unicode(item.data.cssText) + '\n\n'
         return css
 
@@ -144,22 +161,20 @@ class OEB2HTML:
 
 
 class OEB2HTMLNoCSSizer(OEB2HTML):
-    '''
+    """
     This will remap a small number of CSS styles to equivalent HTML tags.
-    '''
+    """
 
     def dump_text(self, elem, stylizer, page):
-        '''
+        """
         @elem: The element in the etree that we are working on.
         @stylizer: The style information attached to the element.
-        '''
+        """
 
         # We can only processes tags. If there isn't a tag return any text.
-        if not isinstance(elem.tag, string_or_bytes) \
-           or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
+        if not isinstance(elem.tag, (str, bytes)) or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) in (XHTML_NS, SVG_NS) \
-                    and elem.tail:
+            if p is not None and isinstance(p.tag, (str, bytes)) and namespace(p.tag) in (XHTML_NS, SVG_NS) and elem.tail:
                 return [elem.tail]
             return ['']
 
@@ -175,8 +190,7 @@ class OEB2HTMLNoCSSizer(OEB2HTML):
         tags.append(tag)
 
         # Ignore anything that is set to not be displayed.
-        if style['display'] in ('none', 'oeb-page-head', 'oeb-page-foot') \
-           or style['visibility'] == 'hidden':
+        if style['display'] in ('none', 'oeb-page-head', 'oeb-page-foot') or style['visibility'] == 'hidden':
             return ['']
 
         # Remove attributes we won't want.
@@ -224,7 +238,7 @@ class OEB2HTMLNoCSSizer(OEB2HTML):
         tags.reverse()
         for t in tags:
             if t not in SELF_CLOSING_TAGS:
-                text.append('</%s>' % t)
+                text.append(f'</{t}>')
 
         # Add the text that is outside of the tag.
         if hasattr(elem, 'tail') and elem.tail:
@@ -234,22 +248,20 @@ class OEB2HTMLNoCSSizer(OEB2HTML):
 
 
 class OEB2HTMLInlineCSSizer(OEB2HTML):
-    '''
+    """
     Turns external CSS classes into inline style attributes.
-    '''
+    """
 
     def dump_text(self, elem, stylizer, page):
-        '''
+        """
         @elem: The element in the etree that we are working on.
         @stylizer: The style information attached to the element.
-        '''
+        """
 
         # We can only processes tags. If there isn't a tag return any text.
-        if not isinstance(elem.tag, string_or_bytes) \
-           or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
+        if not isinstance(elem.tag, (str, bytes)) or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) in (XHTML_NS, SVG_NS) \
-                    and elem.tail:
+            if p is not None and isinstance(p.tag, (str, bytes)) and namespace(p.tag) in (XHTML_NS, SVG_NS) and elem.tail:
                 return [elem.tail]
             return ['']
 
@@ -260,14 +272,14 @@ class OEB2HTMLInlineCSSizer(OEB2HTML):
         tag = barename(elem.tag)
         attribs = elem.attrib
 
-        style_a = '%s' % style
-        style_a = style_a if style_a else ''
+        style_a = f'{style}'
+        style_a = style_a or ''
         if tag == 'body':
             # Change the body to a div so we can merge multiple files.
             tag = 'div'
             # Add page-break-brefore: always because renders typically treat a new file (we're merging files)
             # as a page break and remove all other page break types that might be set.
-            style_a = 'page-break-before: always; %s' % re.sub('page-break-[^:]+:[^;]+;?', '', style_a)
+            style_a = 'page-break-before: always; {}'.format(re.sub(r'page-break-[^:]+:[^;]+;?', '', style_a))
         # Remove unnecessary spaces.
         style_a = re.sub(r'\s{2,}', ' ', style_a).strip()
         tags.append(tag)
@@ -287,7 +299,7 @@ class OEB2HTMLInlineCSSizer(OEB2HTML):
         # Turn style into strings for putting in the tag.
         style_t = ''
         if style_a:
-            style_t = ' style="%s"' % style_a.replace('"', "'")
+            style_t = ' style="{}"'.format(style_a.replace('"', "'"))
 
         # Write the tag.
         text.append(f'<{tag}{at}{style_t}')
@@ -308,7 +320,7 @@ class OEB2HTMLInlineCSSizer(OEB2HTML):
         tags.reverse()
         for t in tags:
             if t not in SELF_CLOSING_TAGS:
-                text.append('</%s>' % t)
+                text.append(f'</{t}>')
 
         # Add the text that is outside of the tag.
         if hasattr(elem, 'tail') and elem.tail:
@@ -318,16 +330,16 @@ class OEB2HTMLInlineCSSizer(OEB2HTML):
 
 
 class OEB2HTMLClassCSSizer(OEB2HTML):
-    '''
+    """
     Use CSS classes. css_style option can specify whether to use
     inline classes (style tag in the head) or reference an external
     CSS file called style.css.
-    '''
+    """
 
     def mlize_spine(self, oeb_book):
         output = []
         for item in oeb_book.spine:
-            self.log.debug('Converting %s to HTML...' % item.href)
+            self.log.debug(f'Converting {item.href} to HTML...')
             self.rewrite_ids(item.data, item)
             rewrite_links(item.data, partial(self.rewrite_link, page=item))
             stylizer = Stylizer(item.data, item.href, oeb_book, self.opts)
@@ -336,24 +348,27 @@ class OEB2HTMLClassCSSizer(OEB2HTML):
         if self.opts.htmlz_class_style == 'external':
             css = '<link href="style.css" rel="stylesheet" type="text/css" />'
         else:
-            css =  '<style type="text/css">' + self.get_css(oeb_book) + '</style>'
-        title = '<title>%s</title>' % prepare_string_for_xml(self.book_title)
-        output = ['<html><head><meta http-equiv="Content-Type" content="text/html;charset=utf-8" />'] + \
-            [css] + [title, '</head><body>'] + output + ['</body></html>']
+            css = '<style type="text/css">' + self.get_css(oeb_book) + '</style>'
+        title = f'<title>{prepare_string_for_xml(self.book_title)}</title>'
+        output = (
+            ['<html><head><meta http-equiv="Content-Type" content="text/html;charset=utf-8" />']
+            + [css]
+            + [title, '</head><body>']
+            + output
+            + ['</body></html>']
+        )
         return ''.join(output)
 
     def dump_text(self, elem, stylizer, page):
-        '''
+        """
         @elem: The element in the etree that we are working on.
         @stylizer: The style information attached to the element.
-        '''
+        """
 
         # We can only processes tags. If there isn't a tag return any text.
-        if not isinstance(elem.tag, string_or_bytes) \
-           or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
+        if not isinstance(elem.tag, (str, bytes)) or namespace(elem.tag) not in (XHTML_NS, SVG_NS):
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) in (XHTML_NS, SVG_NS) \
-                    and elem.tail:
+            if p is not None and isinstance(p.tag, (str, bytes)) and namespace(p.tag) in (XHTML_NS, SVG_NS) and elem.tail:
                 return [elem.tail]
             return ['']
 
@@ -396,7 +411,7 @@ class OEB2HTMLClassCSSizer(OEB2HTML):
         tags.reverse()
         for t in tags:
             if t not in SELF_CLOSING_TAGS:
-                text.append('</%s>' % t)
+                text.append(f'</{t}>')
 
         # Add the text that is outside of the tag.
         if hasattr(elem, 'tail') and elem.tail:
@@ -409,19 +424,19 @@ def oeb2html_no_css(oeb_book, log, opts):
     izer = OEB2HTMLNoCSSizer(log)
     html = izer.oeb2html(oeb_book, opts)
     images = izer.images
-    return (html, images)
+    return html, images
 
 
 def oeb2html_inline_css(oeb_book, log, opts):
     izer = OEB2HTMLInlineCSSizer(log)
     html = izer.oeb2html(oeb_book, opts)
     images = izer.images
-    return (html, images)
+    return html, images
 
 
 def oeb2html_class_css(oeb_book, log, opts):
     izer = OEB2HTMLClassCSSizer(log)
-    setattr(opts, 'class_style', 'inline')
+    opts.class_style = 'inline'
     html = izer.oeb2html(oeb_book, opts)
     images = izer.images
-    return (html, images)
+    return html, images

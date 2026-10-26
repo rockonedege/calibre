@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # calibre documentation build configuration file, created by
 # sphinx-quickstart.py on Sun Mar 23 01:23:55 2008.
 #
@@ -11,19 +9,25 @@
 # All configuration values have a default value; values that are commented out
 # serve to show the default value.
 
-import sys, os, errno
+import errno
+import os
+import sys
 from datetime import date
 
 # If your extensions are in another directory, add it here.
 base = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(base)
 sys.path.insert(0, os.path.dirname(base))
 from setup import __appname__, __version__
+
+sys.path.append(base)
+
+import custom  # ruff: ignore[unused-import]
+
+import calibre.utils.img as cimg  # ruff: ignore[unused-import]
 from calibre.utils.localization import localize_website_link
-import calibre.utils.img as cimg
-import custom
+
 del sys.path[0]
-custom, cimg
+
 # General configuration
 # ---------------------
 
@@ -37,14 +41,14 @@ extensions = ['sphinx.ext.autodoc', 'custom', 'sidebar_toc', 'sphinx.ext.viewcod
 templates_path = ['templates']
 
 # The suffix of source filenames.
-source_suffix = '.rst'
+source_suffix = {'.rst': 'restructuredtext'}
 
 # The master toctree document.
-master_doc = 'index' if tags.has('online') else 'simple_index'  # noqa
+master_doc = 'index' if tags.has('online') else 'simple_index'  # ruff: ignore[undefined-name]
 # kill the warning about index/simple_index not being in a toctree
 exclude_patterns = ['simple_index.rst'] if master_doc == 'index' else ['index.rst']
 exclude_patterns.append('cli-options-header.rst')
-if tags.has('gettext'):  # noqa
+if tags.has('gettext'):  # ruff: ignore[undefined-name]
     # Do not exclude anything as the strings must be translated. This will
     # generate a warning about the documents not being in a toctree, just ignore
     # it.
@@ -57,15 +61,14 @@ language = os.environ.get('CALIBRE_OVERRIDE_LANG', 'en')
 def generated_langs():
     try:
         return os.listdir(os.path.join(base, 'generated'))
-    except EnvironmentError as e:
+    except OSError as e:
         if e.errno != errno.ENOENT:
             raise
     return ()
 
 
 # ignore generated files in languages other than the language we are building for
-ge = {'generated/' + x for x in generated_langs()} | {
-    'generated/' + x for x in os.environ.get('ALL_USER_MANUAL_LANGUAGES', '').split()}
+ge = {'generated/' + x for x in generated_langs()} | {'generated/' + x for x in os.environ.get('ALL_USER_MANUAL_LANGUAGES', '').split()}
 ge.discard('generated/' + language)
 exclude_patterns += list(ge)
 del ge
@@ -92,13 +95,14 @@ today_fmt = '%B %d, %Y'
 unused_docs = ['global', 'cli/global']
 
 locale_dirs = ['locale/']
-title = '%s User Manual' % __appname__
+title = f'{__appname__} User Manual'
 needs_localization = language not in {'en', 'eng'}
 if needs_localization:
     import gettext
+
     try:
         t = gettext.translation('simple_index', locale_dirs[0], [language])
-    except IOError:
+    except OSError:
         pass
     else:
         title = t.gettext(title)
@@ -158,17 +162,18 @@ html_last_updated_fmt = '%b %d, %Y'
 html_short_title = _('Start')
 
 from calibre.utils.localization import get_language
+
 html_context = {}
-html_context['other_languages'] = [
-    (lc, get_language(lc)) for lc in os.environ.get('ALL_USER_MANUAL_LANGUAGES', '').split() if lc != language]
+html_context['other_languages'] = [(lc, get_language(lc)) for lc in os.environ.get('ALL_USER_MANUAL_LANGUAGES', '').split() if lc != language]
 
 
 def sort_languages(x):
     from calibre.utils.icu import sort_key
+
     lc, name = x
     if lc == language:
         return ''
-    return sort_key(type(u'')(name))
+    return sort_key(str(name))
 
 
 website = 'https://calibre-ebook.com'
@@ -185,16 +190,16 @@ extlinks = {
 }
 del sort_languages, get_language
 
-epub_author      = u'Kovid Goyal'
-epub_publisher   = u'Kovid Goyal'
-epub_copyright   = u'© {} Kovid Goyal'.format(date.today().year)
-epub_description = u'Comprehensive documentation for calibre'
-epub_identifier  = u'https://manual.calibre-ebook.com'
-epub_scheme      = u'url'
-epub_uid         = u'S54a88f8e9d42455e9c6db000e989225f'
-epub_tocdepth    = 4
-epub_tocdup      = True
-epub_cover       = ('epub_cover.jpg', 'epub_cover_template.html')
+epub_author = 'Kovid Goyal'
+epub_publisher = 'Kovid Goyal'
+epub_copyright = f'© {date.today().year} Kovid Goyal'  # ruff: ignore[call-date-today]
+epub_description = 'Comprehensive documentation for calibre'
+epub_identifier = 'https://manual.calibre-ebook.com'
+epub_scheme = 'url'
+epub_uid = 'S54a88f8e9d42455e9c6db000e989225f'
+epub_tocdepth = 4
+epub_tocdup = True
+epub_cover = ('epub_cover.jpg', 'epub_cover_template.html')
 suppress_warnings = ['epub.duplicated_toc_entry']
 
 # Custom sidebar templates, maps document names to template names.
@@ -246,6 +251,6 @@ latex_logo = 'resources/logo.png'
 latex_show_pagerefs = True
 latex_show_urls = 'footnote'
 latex_elements = {
-    'papersize':'letterpaper',
-    'preamble': r'\renewcommand{\pageautorefname}{%s}' % _('page'),
+    'papersize': 'letterpaper',
+    'preamble': r'\renewcommand{\pageautorefname}{%s}' % _('page'),  # ruff: ignore[printf-string-formatting]
 }

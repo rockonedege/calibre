@@ -1,24 +1,30 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 import posixpath
-from collections import namedtuple
 from functools import partial
-from polyglot.builtins import iteritems, itervalues
+from typing import NamedTuple
 
 from lxml import etree
 
 from calibre import fit_image
-from calibre.ebooks.oeb.base import urlunquote, urlquote
 from calibre.ebooks.docx.images import pt_to_emu
+from calibre.ebooks.docx.names import SVG_BLIP_URI, USE_LOCAL_DPI_URI
+from calibre.ebooks.oeb.base import Manifest, urlquote, urlunquote
 from calibre.utils.filenames import ascii_filename
 from calibre.utils.imghdr import identify
+from calibre.utils.localization import _
+from calibre.utils.resources import get_image_path as I
 
-Image = namedtuple('Image', 'rid fname width height fmt item')
+
+class Image(NamedTuple):
+    rid: str
+    fname: str
+    width: int
+    height: int
+    fmt: str
+    item: Manifest.Item
 
 
 def as_num(x):
@@ -38,14 +44,26 @@ def get_image_margins(style):
 
 
 class ImagesManager:
-
-    def __init__(self, oeb, document_relationships, opts):
+    def __init__(self, oeb, document_relationships, opts, svg_rasterizer):
         self.oeb, self.log = oeb, oeb.log
+        self.svg_rasterizer = svg_rasterizer
         self.page_width, self.page_height = opts.output_profile.width_pts, opts.output_profile.height_pts
         self.images = {}
         self.seen_filenames = set()
         self.document_relationships = document_relationships
         self.count = 0
+        self.svg_images = {}
+
+    def read_svg(self, href):
+        if href not in self.svg_images:
+            item = self.oeb.manifest.hrefs.get(href) or self.oeb.manifest.hrefs.get(urlquote(href))
+            if item is None:
+                self.log.warning('Failed to find image:', href)
+                return
+            image_fname = 'media/' + self.create_filename(href, 'svg')
+            image_rid = self.document_relationships.add_image(image_fname)
+            self.svg_images[href] = Image(image_rid, image_fname, -1, -1, 'svg', item)
+        return self.svg_images[href]
 
     def read_image(self, href):
         if href not in self.images:
@@ -60,7 +78,7 @@ class ImagesManager:
             try:
                 fmt, width, height = identify(item.data)
             except Exception:
-                self.log.warning('Replacing corrupted image with blank: %s' % href)
+                self.log.warning(f'Replacing corrupted image with blank: {href}')
                 item.data = I('blank.png', data=True, allow_user_override=False)
                 fmt, width, height = identify(item.data)
             image_fname = 'media/' + self.create_filename(href, fmt)
@@ -69,7 +87,10 @@ class ImagesManager:
             item.unload_data_from_memory()
         return self.images[href]
 
-    def add_image(self, img, block, stylizer, bookmark=None, as_block=False):
+    def abshref(self, x: str) -> str:
+        return x
+
+    def add_image(self, img, block, stylizer, bookmark=None, as_block=False, link=None):
         src = img.get('src')
         if not src:
             return
@@ -78,12 +99,18 @@ class ImagesManager:
             rid = self.read_image(href).rid
         except AttributeError:
             return
-        drawing = self.create_image_markup(img, stylizer, href, as_block=as_block)
-        block.add_image(drawing, bookmark=bookmark)
+        drawing, floating = self.create_image_markup(img, stylizer, href, as_block=as_block)
+        block.add_image(drawing, bookmark=bookmark, link=link, floating=floating)
         return rid
 
-    def create_image_markup(self, html_img, stylizer, href, as_block=False):
-        # TODO: img inside a link (clickable image)
+    def create_image_markup(self, html_img, stylizer, href, as_block=False) -> tuple[etree._Element, bool]:
+        """Return the <w:drawing> for the image and whether it is floating"""
+        svg_rid = ''
+        svghref = self.svg_rasterizer.svg_originals.get(href)
+        if svghref:
+            si = self.read_svg(svghref)
+            if si:
+                svg_rid = si.rid
         style = stylizer.style(html_img)
         floating = style['float']
         if floating not in {'left', 'right'}:
@@ -115,7 +142,10 @@ class ImagesManager:
         scaled, width, height = fit_image(width, height, self.page_width, self.page_height)
         width, height = map(pt_to_emu, (width, height))
 
-        makeelement, namespaces = self.document_relationships.namespace.makeelement, self.document_relationships.namespace.namespaces
+        makeelement, namespaces = (
+            self.document_relationships.namespace.makeelement,
+            self.document_relationships.namespace.namespaces,
+        )
 
         root = etree.Element('root', nsmap=namespaces)
         ans = makeelement(root, 'w:drawing', append=False)
@@ -125,8 +155,13 @@ class ImagesManager:
             parent = makeelement(ans, 'wp:anchor', **get_image_margins(style))
             # The next three lines are boilerplate that Word requires, even
             # though the DOCX specs define defaults for all of them
-            parent.set('simplePos', '0'), parent.set('relativeHeight', '1'), parent.set('behindDoc',"0"), parent.set('locked', "0")
-            parent.set('layoutInCell', "1"), parent.set('allowOverlap', '1')
+            (
+                parent.set('simplePos', '0'),
+                parent.set('relativeHeight', '1'),
+                parent.set('behindDoc', '0'),
+                parent.set('locked', '0'),
+            )
+            parent.set('layoutInCell', '1'), parent.set('allowOverlap', '1')
             makeelement(parent, 'wp:simplePos', x='0', y='0')
             makeelement(makeelement(parent, 'wp:positionH', relativeFrom='margin'), 'wp:align').text = floating
             makeelement(makeelement(parent, 'wp:positionV', relativeFrom='line'), 'wp:align').text = 'top'
@@ -134,7 +169,7 @@ class ImagesManager:
         if fake_margins:
             # DOCX does not support setting margins for inline images, so we
             # fake it by using effect extents to simulate margins
-            makeelement(parent, 'wp:effectExtent', **{k[-1].lower():v for k, v in iteritems(get_image_margins(style))})
+            makeelement(parent, 'wp:effectExtent', **{k[-1].lower(): v for k, v in get_image_margins(style).items()})
         else:
             makeelement(parent, 'wp:effectExtent', l='0', r='0', t='0', b='0')
         if floating is not None:
@@ -143,13 +178,16 @@ class ImagesManager:
                 makeelement(parent, 'wp:wrapTopAndBottom')
             else:
                 makeelement(parent, 'wp:wrapSquare', wrapText='bothSides')
-        self.create_docx_image_markup(parent, name, html_img.get('alt') or name, img.rid, width, height)
-        return ans
+        self.create_docx_image_markup(parent, name, html_img.get('alt') or name, img.rid, width, height, svg_rid=svg_rid)
+        return ans, floating is not None
 
-    def create_docx_image_markup(self, parent, name, alt, img_rid, width, height):
-        makeelement, namespaces = self.document_relationships.namespace.makeelement, self.document_relationships.namespace.namespaces
+    def create_docx_image_markup(self, parent, name, alt, img_rid, width, height, svg_rid=''):
+        makeelement, namespaces = (
+            self.document_relationships.namespace.makeelement,
+            self.document_relationships.namespace.namespaces,
+        )
         makeelement(parent, 'wp:docPr', id=str(self.count), name=name, descr=alt)
-        makeelement(makeelement(parent, 'wp:cNvGraphicFramePr'), 'a:graphicFrameLocks', noChangeAspect="1")
+        makeelement(makeelement(parent, 'wp:cNvGraphicFramePr'), 'a:graphicFrameLocks', noChangeAspect='1')
         g = makeelement(parent, 'a:graphic')
         gd = makeelement(g, 'a:graphicData', uri=namespaces['pic'])
         pic = makeelement(gd, 'pic:pic')
@@ -157,7 +195,11 @@ class ImagesManager:
         makeelement(nvPicPr, 'pic:cNvPr', id='0', name=name, descr=alt)
         makeelement(nvPicPr, 'pic:cNvPicPr')
         bf = makeelement(pic, 'pic:blipFill')
-        makeelement(bf, 'a:blip', r_embed=img_rid)
+        blip = makeelement(bf, 'a:blip', r_embed=img_rid)
+        if svg_rid:
+            ext_list = makeelement(blip, 'a:extLst')
+            makeelement(makeelement(ext_list, 'a:ext', uri=USE_LOCAL_DPI_URI), 'a14:useLocalDpi', val='0')
+            makeelement(makeelement(ext_list, 'a:ext', uri=SVG_BLIP_URI), 'asvg:svgBlip', r_embed=svg_rid)
         makeelement(makeelement(bf, 'a:stretch'), 'a:fillRect')
         spPr = makeelement(pic, 'pic:spPr')
         xfrm = makeelement(spPr, 'a:xfrm')
@@ -178,8 +220,14 @@ class ImagesManager:
         return fname
 
     def serialize(self, images_map):
-        for img in itervalues(self.images):
+        for img in self.images.values():
             images_map['word/' + img.fname] = partial(self.get_data, img.item)
+
+        def get_svg_data(img):
+            return img.item.data_as_bytes_or_none
+
+        for img in self.svg_images.values():
+            images_map['word/' + img.fname] = partial(get_svg_data, img)
 
     def get_data(self, item):
         try:
@@ -189,7 +237,10 @@ class ImagesManager:
 
     def create_cover_markup(self, img, preserve_aspect_ratio, width, height):
         self.count += 1
-        makeelement, namespaces = self.document_relationships.namespace.makeelement, self.document_relationships.namespace.namespaces
+        makeelement, namespaces = (
+            self.document_relationships.namespace.makeelement,
+            self.document_relationships.namespace.namespaces,
+        )
         if preserve_aspect_ratio:
             if img.width >= img.height:
                 ar = img.height / img.width
@@ -200,9 +251,14 @@ class ImagesManager:
 
         root = etree.Element('root', nsmap=namespaces)
         ans = makeelement(root, 'w:drawing', append=False)
-        parent = makeelement(ans, 'wp:anchor', **{'dist'+edge:'0' for edge in 'LRTB'})
-        parent.set('simplePos', '0'), parent.set('relativeHeight', '1'), parent.set('behindDoc',"0"), parent.set('locked', "0")
-        parent.set('layoutInCell', "1"), parent.set('allowOverlap', '1')
+        parent = makeelement(ans, 'wp:anchor', **{'dist' + edge: '0' for edge in 'LRTB'})
+        (
+            parent.set('simplePos', '0'),
+            parent.set('relativeHeight', '1'),
+            parent.set('behindDoc', '0'),
+            parent.set('locked', '0'),
+        )
+        parent.set('layoutInCell', '1'), parent.set('allowOverlap', '1')
         makeelement(parent, 'wp:simplePos', x='0', y='0')
         makeelement(makeelement(parent, 'wp:positionH', relativeFrom='page'), 'wp:align').text = 'center'
         makeelement(makeelement(parent, 'wp:positionV', relativeFrom='page'), 'wp:align').text = 'center'
@@ -214,9 +270,12 @@ class ImagesManager:
         return ans
 
     def write_cover_block(self, body, cover_image):
-        makeelement, namespaces = self.document_relationships.namespace.makeelement, self.document_relationships.namespace.namespaces
+        makeelement, namespaces = (
+            self.document_relationships.namespace.makeelement,
+            self.document_relationships.namespace.namespaces,
+        )
         pbb = body[0].xpath('//*[local-name()="pageBreakBefore"]')[0]
-        pbb.set('{%s}val' % namespaces['w'], 'on')
+        pbb.set('{{{}}}val'.format(namespaces['w']), 'on')
         p = makeelement(body, 'w:p', append=False)
         body.insert(0, p)
         r = makeelement(p, 'w:r')

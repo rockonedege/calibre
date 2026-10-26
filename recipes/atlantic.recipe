@@ -4,14 +4,17 @@
 import json
 from xml.sax.saxutils import escape, quoteattr
 
-from calibre.web.feeds.news import BasicNewsRecipe, prefixed_classes as prefix_classes, classes
+from calibre.utils.iso8601 import parse_iso8601
+from calibre.web.automate.bot_check import retry_bot_checks
+from calibre.web.feeds.news import BasicNewsRecipe, classes
+from calibre.web.feeds.news import prefixed_classes as prefix_classes
 
 web_version = False
 test_article = None
 # test_article = 'https://www.theatlantic.com/health/archive/2020/12/covid-19-second-surge/617415/?utm_source=feed'
 
 
-# {{{ parse article JSON
+# parse article JSON {{{
 def process_image_block(lines, block):
     caption = block.get('captionText')
     caption_lines = []
@@ -27,14 +30,18 @@ def process_image_block(lines, block):
 def json_to_html(raw):
     data = json.loads(raw)
     # open('/t/p.json', 'w').write(json.dumps(data, indent=2))
-    data = sorted((v['data'] for v in data['props']['pageProps']['urqlState'].values()), key=len)[-1]
+    data = max((v['data'] for v in data['props']['pageProps']['urqlState'].values()), key=len)
     article = json.loads(data)['article']
+    # open('/t/p.json', 'w').write(json.dumps(article, indent=2))
     lines = []
     lines.append('<h1 style="align: center">' + escape(article['title']) + '</h1>')
     lines.append('<h2 style="align: center">' + escape(article['dek']) + '</h2>')
     auts = ', '.join(x['displayName'] for x in article['authors'])
     if auts:
         lines.append('<p style="align: center">by ' + escape(auts) + '</p>')
+    dp = article['datePublished']
+    dt = parse_iso8601(dp)
+    lines.append('<p style="align: center">' + escape(dt.strftime('%a, %d %b %Y')) + '</p>')
     if article.get('leadArt') and 'image' in article['leadArt']:
         process_image_block(lines, article['leadArt']['image'])
     for item in article['content']:
@@ -63,22 +70,44 @@ def extract_html(soup):
     raw = script[0].contents[0]
     return json_to_html(raw)
 
+
 # }}}
 
 
 class TheAtlantic(BasicNewsRecipe):
-
     if web_version:
         title = 'TheAtlantic.com'
-        description = 'News and editorial about politics, culture, entertainment, tech, etc. Contains many articles not seen in The Atlantic magazine'
+        description = (
+            'News and editorial about politics, culture, entertainment, tech, etc. Contains many articles not seen in The Atlantic magazine.'
+            ' Uses the camoufox browser, which is downloaded on first use, as theatlantic.com blocks every lighter way of fetching its pages.'
+        )
     else:
         title = 'The Atlantic'
-        description = 'Current affairs and politics focussed on the US'
+        description = (
+            'Current affairs and politics focused on the US.'
+            ' Uses the camoufox browser, which is downloaded on first use, as theatlantic.com blocks every lighter way of fetching its pages.'
+        )
         INDEX = 'https://www.theatlantic.com/magazine/'
 
     __author__ = 'Kovid Goyal'
     language = 'en'
     encoding = 'utf-8'
+
+    # theatlantic.com answers every lighter way of fetching its pages with a
+    # 403, see calibre.web.automate.bot_check
+    browser_type = 'camoufox'
+    # No delay between requests, deliberately: any delay at all makes calibre
+    # download on a single thread, and each download thread gets a tab of its
+    # own in this browser.
+    delay = 0
+
+    recipe_specific_options = {'date': {'short': 'The date of the edition to download (YYYY/MM format)', 'long': 'For example, 2024/05'}}
+
+    def __init__(self, *args, **kwargs):
+        BasicNewsRecipe.__init__(self, *args, **kwargs)
+        d = self.recipe_specific_options.get('date')
+        if d and isinstance(d, str):
+            self.INDEX = 'https://www.theatlantic.com/magazine/toc/' + d + '/'
 
     keep_only_tags = [
         dict(itemprop=['headline']),
@@ -86,9 +115,7 @@ class TheAtlantic(BasicNewsRecipe):
             'c-article-header__hed c-rubric article-header c-article-meta c-lead-media'
             ' lead-img article-cover-extra article-body article-magazine article-cover-content'
         ),
-        prefix_classes(
-            'ArticleHeader_root__ ArticleLayoutSection_main__ ArticleBody_root__'
-        ),
+        prefix_classes('ArticleHeader_root__ ArticleLayoutSection_main__ ArticleHero_timestamp__ ArticleBody_root__'),
         dict(itemprop='articleBody'),
         # these are for photos articles
         dict(id=['article-header', 'from-json-by-calibre']),
@@ -100,22 +127,10 @@ class TheAtlantic(BasicNewsRecipe):
             ' offset-wrapper boxtop-most-popular social-icons hints read-more c-article-writer__social'
         ),
         prefix_classes('ArticleRecirc_inline__'),
-        {
-            'name': ['meta', 'link', 'noscript', 'aside', 'h3']
-        },
-        {
-            'attrs': {
-                'class': ['offset-wrapper', 'boxtop-most-popular']
-            }
-        },
-        {
-            'attrs': {
-                'class': lambda x: x and 'article-tools' in x
-            }
-        },
-        {
-            'src': lambda x: x and 'spotxchange.com' in x
-        },
+        {'name': ['meta', 'link', 'noscript', 'aside', 'h3']},
+        {'attrs': {'class': ['offset-wrapper', 'boxtop-most-popular']}},
+        {'attrs': {'class': lambda x: x and 'article-tools' in x}},
+        {'src': lambda x: x and 'spotxchange.com' in x},
     ]
     remove_tags_after = classes('article-body')
 
@@ -132,10 +147,10 @@ class TheAtlantic(BasicNewsRecipe):
         }
     '''
 
-    def get_browser(self):
-        br = BasicNewsRecipe.get_browser(self)
+    def get_browser(self, *args, **kwargs):
+        br = BasicNewsRecipe.get_browser(self, *args, **kwargs)
         br.set_cookie('inEuropeanUnion', '0', '.theatlantic.com')
-        return br
+        return retry_bot_checks(br)
 
     def preprocess_raw_html(self, raw_html, url):
         try:
@@ -165,7 +180,6 @@ class TheAtlantic(BasicNewsRecipe):
         return ans
 
     if web_version and not test_article:
-
         use_embedded_content = False
 
         feeds = [
@@ -189,6 +203,7 @@ class TheAtlantic(BasicNewsRecipe):
             ('Notes | The Atlantic', 'https://feeds.feedburner.com/TheAtlanticNotes'),
         ]
     else:
+
         def parse_index(self):
             if test_article:
                 return [('Articles', [{'title': 'Test article', 'url': test_article}])]
@@ -198,7 +213,9 @@ class TheAtlantic(BasicNewsRecipe):
                 self.cover_url = img['src']
             current_section, current_articles = 'Cover Story', []
             feeds = []
-            for x in soup.findAll(**prefix_classes('TocFeaturedSection_heading__ TocSection_heading__ TocHeroGridItem_hedLink___ TocGridItem_hedLink__')):
+            for x in soup.findAll(
+                **prefix_classes('TocFeaturedSection_heading__ TocSection_heading__ TocHeroGridItem_hedLink__ TocGridItem_hedLink__ RiverGridItem_hedLink__')
+            ):
                 cls = x['class']
                 if not isinstance(cls, str):
                     cls = ' '.join(cls)
@@ -221,4 +238,5 @@ if __name__ == '__main__':
     import sys
 
     from calibre.ebooks.BeautifulSoup import BeautifulSoup
+
     print(extract_html(BeautifulSoup(open(sys.argv[-1]).read())))

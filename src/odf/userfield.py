@@ -20,15 +20,14 @@
 
 """Class to show and manipulate user fields in odf documents."""
 
-
 import sys
 import zipfile
 
-from odf.text import UserFieldDecl
 from odf.namespaces import OFFICENS
 from odf.opendocument import load
+from odf.text import UserFieldDecl
 
-OUTENCODING = "utf-8"
+OUTENCODING = 'utf-8'
 
 
 # OpenDocument v.1.0 section 6.7.1
@@ -40,7 +39,7 @@ VALUE_TYPES = {
     'time': (OFFICENS, 'time-value'),
     'boolean': (OFFICENS, 'boolean-value'),
     'string': (OFFICENS, 'string-value'),
-    }
+}
 
 
 class UserFields:
@@ -65,7 +64,7 @@ class UserFields:
         if isinstance(self.src_file, (bytes, str)):
             # src_file is a filename, check if it is a zip-file
             if not zipfile.is_zipfile(self.src_file):
-                raise TypeError("%s is no odt file." % self.src_file)
+                raise TypeError(f'{self.src_file} is no odt file.')
         elif self.src_file is None:
             # use stdin if no file given
             self.src_file = sys.stdin
@@ -74,6 +73,7 @@ class UserFields:
 
     def savedoc(self):
         # write output
+        assert self.document is not None
         if self.dest_file is None:
             # use stdout if no filename given
             self.document.save('-')
@@ -97,6 +97,7 @@ class UserFields:
 
         """
         self.loaddoc()
+        assert self.document is not None
         found_fields = []
         all_fields = self.document.getElementsByType(UserFieldDecl)
         for f in all_fields:
@@ -108,9 +109,11 @@ class UserFields:
             field_name = f.getAttribute('name')
 
             if field_names is None or field_name in field_names:
-                found_fields.append((field_name.encode(OUTENCODING),
-                                     value_type.encode(OUTENCODING),
-                                     value.encode(OUTENCODING)))
+                found_fields.append((
+                    field_name.encode(OUTENCODING),
+                    value_type.encode(OUTENCODING),
+                    value.encode(OUTENCODING),
+                ))
         return found_fields
 
     def list_values(self, field_names):
@@ -155,6 +158,7 @@ class UserFields:
 
         """
         self.loaddoc()
+        assert self.document is not None
         all_fields = self.document.getElementsByType(UserFieldDecl)
         for f in all_fields:
             field_name = f.getAttribute('name')

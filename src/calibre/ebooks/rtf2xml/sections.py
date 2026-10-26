@@ -10,7 +10,8 @@
 #                                                                       #
 #                                                                       #
 #########################################################################
-import sys, os
+import os
+import sys
 
 from calibre.ebooks.rtf2xml import copy
 from calibre.ptempfile import better_mktemp
@@ -54,11 +55,7 @@ class Sections:
     Instead, ignore all section information in a field-block.
     """
 
-    def __init__(self,
-            in_file,
-            bug_handler,
-            copy=None,
-            run_level=1):
+    def __init__(self, in_file, bug_handler, copy=None, run_level=1):
         """
         Required:
             'file'--file to parse
@@ -68,7 +65,7 @@ class Sections:
             directory from which the script is run.)
         Returns:
             nothing
-            """
+        """
         self.__file = in_file
         self.__bug_handler = bug_handler
         self.__copy = copy
@@ -80,7 +77,7 @@ class Sections:
         Initiate all values.
         """
         self.__mark_start = 'mi<mk<sect-start\n'
-        self.__mark_end =   'mi<mk<sect-end__\n'
+        self.__mark_end = 'mi<mk<sect-end__\n'
         self.__in_field = 0
         self.__section_values = {}
         self.__list_of_sec_values = []
@@ -91,38 +88,38 @@ class Sections:
         self.__text_string = ''
         self.__field_instruction_string = ''
         self.__state_dict = {
-        'before_body'       : self.__before_body_func,
-        'body'              : self.__body_func,
-        'before_first_sec'  : self.__before_first_sec_func,
-        'section'           : self.__section_func,
-        'section_def'       : self.__section_def_func,
-        'sec_in_field'      : self.__sec_in_field_func,
+            'before_body': self.__before_body_func,
+            'body': self.__body_func,
+            'before_first_sec': self.__before_first_sec_func,
+            'section': self.__section_func,
+            'section_def': self.__section_def_func,
+            'sec_in_field': self.__sec_in_field_func,
         }
         # cw<sc<sect-defin<nu<true
         self.__body_dict = {
-        'cw<sc<section___'      : self.__found_section_func,
-        'mi<mk<sec-fd-beg'      : self.__found_sec_in_field_func,
-        'cw<sc<sect-defin'      : self.__found_section_def_bef_sec_func,
+            'cw<sc<section___': self.__found_section_func,
+            'mi<mk<sec-fd-beg': self.__found_sec_in_field_func,
+            'cw<sc<sect-defin': self.__found_section_def_bef_sec_func,
         }
         self.__section_def_dict = {
-        'cw<pf<par-def___'      : (self.__end_sec_def_func, None),
-        'mi<mk<body-open_'      : (self.__end_sec_def_func, None),
-        'cw<tb<columns___'      : (self.__attribute_func, 'columns'),
-        'cw<pa<margin-lef'      : (self.__attribute_func, 'margin-left'),
-        'cw<pa<margin-rig'      : (self.__attribute_func, 'margin-right'),
-        'mi<mk<header-ind'      : (self.__end_sec_def_func, None),
-        # premature endings
-        # __end_sec_premature_func
-        'tx<nu<__________'      : (self.__end_sec_premature_func, None),
-        'cw<ci<font-style'      : (self.__end_sec_premature_func, None),
-        'cw<ci<font-size_'      : (self.__end_sec_premature_func, None),
+            'cw<pf<par-def___': (self.__end_sec_def_func, None),
+            'mi<mk<body-open_': (self.__end_sec_def_func, None),
+            'cw<tb<columns___': (self.__attribute_func, 'columns'),
+            'cw<pa<margin-lef': (self.__attribute_func, 'margin-left'),
+            'cw<pa<margin-rig': (self.__attribute_func, 'margin-right'),
+            'mi<mk<header-ind': (self.__end_sec_def_func, None),
+            # premature endings
+            # __end_sec_premature_func
+            'tx<nu<__________': (self.__end_sec_premature_func, None),
+            'cw<ci<font-style': (self.__end_sec_premature_func, None),
+            'cw<ci<font-size_': (self.__end_sec_premature_func, None),
         }
         self.__sec_in_field_dict = {
-        'mi<mk<sec-fd-end'      : self.__end_sec_in_field_func,
-        # changed this 2004-04-26
-        # two lines
-        # 'cw<sc<section___'      : self.__found_section_in_field_func,
-        # 'cw<sc<sect-defin'      : self.__found_section_def_in_field_func,
+            'mi<mk<sec-fd-end': self.__end_sec_in_field_func,
+            # changed this 2004-04-26
+            # two lines
+            # 'cw<sc<section___'  : self.__found_section_in_field_func,
+            # 'cw<sc<sect-defin'  : self.__found_section_def_in_field_func,
         }
 
     def __found_section_def_func(self, line):
@@ -205,7 +202,7 @@ class Sections:
             nothing
         Logic:
             I have found a section definition. Check if the line is the end of
-            the defnition (a paragraph definition), or if it contains info that
+            the definition (a paragraph definition), or if it contains info that
             should be added to the values dictionary. If neither of these
             cases are true, output the line to a file.
         """
@@ -274,8 +271,8 @@ class Sections:
             my_string += 'mi<tg<close_____<section\n'
         else:
             self.__found_first_sec = 1
-        my_string += 'mi<tg<open-att__<section<num>%s' % str(self.__section_num)
-        my_string += '<num-in-level>%s' % str(self.__section_num)
+        my_string += f'mi<tg<open-att__<section<num>{self.__section_num!s}'
+        my_string += f'<num-in-level>{self.__section_num!s}'
         my_string += '<type>rtf-native'
         my_string += '<level>0'
         keys = self.__section_values.keys()
@@ -284,7 +281,7 @@ class Sections:
                 my_string += f'<{key}>{self.__section_values[key]}'
         my_string += '\n'
         my_string += self.__mark_end
-        # # my_string += line
+        # my_string += line
         if self.__state == 'body':
             self.__write_obj.write(my_string)
         elif self.__state == 'sec_in_field':
@@ -352,27 +349,13 @@ class Sections:
         elif self.__token_info == 'cw<pf<par-def___':
             self.__state = 'body'
             self.__section_num += 1
-            self.__write_obj.write(
-                    'mi<tg<open-att__<section<num>%s'
-                    '<num-in-level>%s'
-                    '<type>rtf-native'
-                    '<level>0\n'
-                    % (str(self.__section_num), str(self.__section_num))
-                    )
+            self.__write_obj.write(f'mi<tg<open-att__<section<num>{self.__section_num!s}<num-in-level>{self.__section_num!s}<type>rtf-native<level>0\n')
             self.__found_first_sec = 1
         elif self.__token_info == 'tx<nu<__________':
             self.__state = 'body'
             self.__section_num += 1
-            self.__write_obj.write(
-                    'mi<tg<open-att__<section<num>%s'
-                    '<num-in-level>%s'
-                    '<type>rtf-native'
-                    '<level>0\n'
-                    % (str(self.__section_num), str(self.__section_num))
-                    )
-            self.__write_obj.write(
-                'cw<pf<par-def___<true\n'
-                    )
+            self.__write_obj.write(f'mi<tg<open-att__<section<num>{self.__section_num!s}<num-in-level>{self.__section_num!s}<type>rtf-native<level>0\n')
+            self.__write_obj.write('cw<pf<par-def___<true\n')
             self.__found_first_sec = 1
         self.__write_obj.write(line)
 
@@ -426,12 +409,12 @@ class Sections:
         """
         # change this 2004-04-26
         # Don't do anything
-        """
-        self.__sec_in_field_string += line
-        self.__print_field_sec_attributes()
-        self.__write_obj.write(self.__sec_in_field_string)
-        self.__print_field_sec_attributes()
-        """
+        #
+        # self.__sec_in_field_string += line
+        # self.__print_field_sec_attributes()
+        # self.__write_obj.write(self.__sec_in_field_string)
+        # self.__print_field_sec_attributes()
+
         self.__state = 'body'
         self.__in_field = 0
         # this is changed too
@@ -459,19 +442,15 @@ class Sections:
         """
         num = self.__field_num[0]
         self.__field_num = self.__field_num[1:]
-        self.__write_obj.write(
-        'mi<tg<close_____<section\n'
-        'mi<tg<open-att__<section<num>%s' % str(num)
-        )
+        self.__write_obj.write(f'mi<tg<close_____<section\nmi<tg<open-att__<section<num>{num!s}')
         if self.__list_of_sec_values:
-            keys =  self.__list_of_sec_values[0].keys()
+            keys = self.__list_of_sec_values[0].keys()
             for key in keys:
-                self.__write_obj.write(
-                f'<{key}>{self.__list_of_sec_values[0][key]}\n')
+                self.__write_obj.write(f'<{key}>{self.__list_of_sec_values[0][key]}\n')
             self.__list_of_sec_values = self.__list_of_sec_values[1:]
         self.__write_obj.write('<level>0')
         self.__write_obj.write('<type>rtf-native')
-        self.__write_obj.write('<num-in-level>%s' % str(self.__section_num))
+        self.__write_obj.write(f'<num-in-level>{self.__section_num!s}')
         self.__write_obj.write('\n')
         # Look here
 
@@ -526,11 +505,12 @@ class Sections:
             if action is None:
                 sys.stderr.write('no matching state in module sections.py\n')
                 sys.stderr.write(self.__state + '\n')
-            action(line)
+            else:
+                action(line)
         read_obj.close()
         self.__write_obj.close()
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "sections.data")
+            copy_obj.copy_file(self.__write_to, 'sections.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)

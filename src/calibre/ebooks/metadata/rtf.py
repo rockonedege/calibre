@@ -10,13 +10,14 @@ import re
 
 from calibre import force_unicode
 from calibre.ebooks.metadata import MetaInformation
-from polyglot.builtins import codepoint_to_chr, string_or_bytes, int_to_byte
+from calibre.utils.localization import _
+from polyglot.builtins import int_to_byte
 
-title_pat    = re.compile(br'\{\\info.*?\{\\title(.*?)(?<!\\)\}', re.DOTALL)
-author_pat   = re.compile(br'\{\\info.*?\{\\author(.*?)(?<!\\)\}', re.DOTALL)
-comment_pat  = re.compile(br'\{\\info.*?\{\\subject(.*?)(?<!\\)\}', re.DOTALL)
-tags_pat = re.compile(br'\{\\info.*?\{\\category(.*?)(?<!\\)\}', re.DOTALL)
-publisher_pat = re.compile(br'\{\\info.*?\{\\manager(.*?)(?<!\\)\}', re.DOTALL)
+title_pat = re.compile(rb'\{\\info.*?\{\\title(.*?)(?<!\\)\}', re.DOTALL)
+author_pat = re.compile(rb'\{\\info.*?\{\\author(.*?)(?<!\\)\}', re.DOTALL)
+comment_pat = re.compile(rb'\{\\info.*?\{\\subject(.*?)(?<!\\)\}', re.DOTALL)
+tags_pat = re.compile(rb'\{\\info.*?\{\\category(.*?)(?<!\\)\}', re.DOTALL)
+publisher_pat = re.compile(rb'\{\\info.*?\{\\manager(.*?)(?<!\\)\}', re.DOTALL)
 
 
 def get_document_info(stream):
@@ -28,24 +29,26 @@ def get_document_info(stream):
     """
     block_size = 4096
     stream.seek(0)
-    found, block = False, b""
+    found, block = False, b''
     while not found:
         prefix = block[-6:]
         block = prefix + stream.read(block_size)
         actual_block_size = len(block) - len(prefix)
         if len(block) == len(prefix):
             break
-        idx = block.find(br'{\info')
+        idx = block.find(rb'{\info')
         if idx >= 0:
             found = True
             pos = stream.tell() - actual_block_size + idx - len(prefix)
             stream.seek(pos)
-        else:
-            if block.find(br'\sect') > -1:
-                break
+        elif block.find(rb'\sect') > -1:
+            break
     if not found:
         return None, 0
-    data, count, = [], 0
+    (
+        data,
+        count,
+    ) = [], 0
     pos = stream.tell()
     while True:
         ch = stream.read(1)
@@ -63,14 +66,14 @@ def get_document_info(stream):
 
 
 def detect_codepage(stream):
-    pat = re.compile(br'\\ansicpg(\d+)')
+    pat = re.compile(rb'\\ansicpg(\d+)')
     match = pat.search(stream.read(512))
     if match is not None:
         num = match.group(1)
         if num == b'0':
             num = b'1252'
         try:
-            codec = (b'cp'+num).decode('ascii')
+            codec = (b'cp' + num).decode('ascii')
             codecs.lookup(codec)
             return codec
         except Exception:
@@ -94,7 +97,7 @@ def decode(raw, codec):
 
     def uni(match):
         try:
-            return codepoint_to_chr(int(match.group(1)))
+            return chr(int(match.group(1)))
         except Exception:
             return '?'
 
@@ -113,7 +116,7 @@ def get_metadata(stream):
     Return metadata as a L{MetaInfo} object
     """
     stream.seek(0)
-    if stream.read(5) != br'{\rtf':
+    if stream.read(5) != rb'{\rtf':
         return MetaInformation(_('Unknown'))
     block = get_document_info(stream)[0]
     if not block:
@@ -157,38 +160,39 @@ def create_metadata(stream, options):
     md = [r'{\info']
     if options.title:
         title = encode(options.title)
-        md.append(r'{\title %s}'%(title,))
+        md.append(rf'{{\title {title}}}')
     if options.authors:
         au = options.authors
-        if not isinstance(au, string_or_bytes):
+        if not isinstance(au, (str, bytes)):
             au = ', '.join(au)
         author = encode(au)
-        md.append(r'{\author %s}'%(author,))
+        md.append(rf'{{\author {author}}}')
     comp = options.comment if hasattr(options, 'comment') else options.comments
     if comp:
         comment = encode(comp)
-        md.append(r'{\subject %s}'%(comment,))
+        md.append(rf'{{\subject {comment}}}')
     if options.publisher:
         publisher = encode(options.publisher)
-        md.append(r'{\manager %s}'%(publisher,))
+        md.append(rf'{{\manager {publisher}}}')
     if options.tags:
         tags = ', '.join(options.tags)
         tags = encode(tags)
-        md.append(r'{\category %s}'%(tags,))
+        md.append(rf'{{\category {tags}}}')
     if len(md) > 1:
         md.append('}')
         stream.seek(0)
-        src   = stream.read()
+        src = stream.read()
         ans = src[:6] + ''.join(md).encode('ascii') + src[6:]
         stream.seek(0)
         stream.write(ans)
 
 
 def set_metadata(stream, options):
-    '''
+    """
     Modify/add RTF metadata in stream
     @param options: Object with metadata attributes title, author, comment, category
-    '''
+    """
+
     def add_metadata_item(src, name, val):
         index = src.rindex('}')
         return src[:index] + r'{\ '[:-1] + name + ' ' + val + '}}'
@@ -231,12 +235,12 @@ def set_metadata(stream, options):
 def find_tests():
     import unittest
     from io import BytesIO
+
     from calibre.ebooks.metadata.book.base import Metadata
 
     class Test(unittest.TestCase):
-
         def test_rtf_metadata(self):
-            stream = BytesIO(br'{\rtf1\ansi\ansicpg1252}')
+            stream = BytesIO(rb'{\rtf1\ansi\ansicpg1252}')
             m = Metadata('Test ø̄title', ['Author One', 'Author БTwo'])
             m.tags = 'tag1 見tag2'.split()
             m.comments = '<p>some ⊹comments</p>'

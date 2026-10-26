@@ -1,41 +1,73 @@
-'''
-nautil.us
-'''
-from calibre.web.feeds.news import BasicNewsRecipe, classes
+#!/usr/bin/env  python
+from calibre.web.feeds.news import BasicNewsRecipe, classes, prefixed_classes
 
 
 class Nautilus(BasicNewsRecipe):
-    title = u'Nautilus'
-    language = 'en'
+    title = 'Nautilus Magazine'
+    language = 'en_US'
     __author__ = 'unkn0wn'
-    oldest_article = 45  # days
+    oldest_article = 30  # days
     max_articles_per_feed = 50
     description = (
         'Nautilus is a different kind of science magazine. Our stories take you into the depths'
         ' of science and spotlight its ripples in our lives and cultures. We believe any subject in science,'
-        ' no matter how complex, can be explained with clarity and vitality.')
+        ' no matter how complex, can be explained with clarity and vitality.'
+    )
     no_stylesheets = True
+    remove_javascript = True
     use_embedded_content = False
-    masthead_url = 'https://nautil.us/wp-content/themes/nautilus/images/logo/light.svg'
-    remove_attributes = ['height', 'width']
+    remove_attributes = ['style', 'height', 'width']
+    masthead_url = 'https://lede-admin.nautil.us/wp-content/uploads/sites/70/sites/3/nautilus/Nautilus-logo.png?w=440'
     ignore_duplicate_articles = {'title', 'url'}
     remove_empty_feeds = True
-    extra_css = '''
-        .article-list_item-byline{font-size:small;}
-        blockquote{color:#404040; text-align:center;}
-        #fig-c{font-size:small;}
-        em{color:#202020;}
-        .breadcrumb{color:gray; font-size:small;}
-        .article-author{font-size:small;}
-    '''
-    keep_only_tags = [classes('article-left-col feature-image article-content')]
+    resolve_internal_links = True
 
-    remove_tags = [
-        classes(
-            'article-action-list article-bottom-newsletter_box main-post-comments-toggle-wrap main-post-comments-wrapper'
-            ' social-share supported-one article-collection_box'
+    extra_css = '''
+        .calibre-nuked-tag-figcaption,
+        [class^="PostByline_textColumn__"],
+        [class^="PostHeaderMeta_timestamp__"],
+        [class^="PostBylineRiver_author__"],
+        [class^="PostBylineRiver_bio__"] {
+            font-size: small;
+        }
+        blockquote { color:#202020; text-align:center; }
+        em { color:#202020; }
+        [class^="PostHeader_dek__"] { font-style: italic; }
+    '''
+
+    recipe_specific_options = {
+        'days': {
+            'short': 'Oldest article to download from this news source. In days ',
+            'long': 'For example, 0.5, gives you articles from the past 12 hours',
+            'default': str(oldest_article),
+        },
+        'res': {
+            'short': 'For hi-res images, select a resolution from the\nfollowing options: 800, 1000, 1200 or 1500',
+            'long': 'This is useful for non e-ink devices, and for a lower file size\nthan the default, use 400 or 300.',
+            'default': '600',
+        },
+    }
+
+    def __init__(self, *args, **kwargs):
+        BasicNewsRecipe.__init__(self, *args, **kwargs)
+        d = self.recipe_specific_options.get('days')
+        if d and isinstance(d, str):
+            self.oldest_article = float(d)
+
+    keep_only_tags = [
+        prefixed_classes(
+            'FeaturedImage_fullWidthWrapper__ PostHeader_postTitle__ PostHeader_dek__ '
+            'PostByline_textColumn__ PostHeaderMeta_timestamp__ FeaturedImage_wrapper__ '
+            'PostContent_content__ PostBylineRiver_author__ PostBylineRiver_bio__'
         )
     ]
+
+    remove_tags = [
+        prefixed_classes('AscendiumAdUnit_wrapper__ AscendiumAdUnit_hidden__ PrimisVideoAdBlock_wrapper__'),
+        classes('wp-block-embed is-type-video is-provider-youtube'),
+    ]
+
+    remove_tags_after = [prefixed_classes('PostBylineRiver_bio__')]
 
     feeds = [
         ('ANTHROPOLOGY', 'https://nautil.us/topics/anthropology/feed'),
@@ -60,23 +92,19 @@ class Nautilus(BasicNewsRecipe):
         ('GEOSCIENCE', 'https://nautil.us/topics/geoscience/feed'),
         ('NEUROSCIENCE', 'https://nautil.us/topics/neuroscience/feed'),
         ('SOCIOLOGY', 'https://nautil.us/topics/sociology/feed'),
+        ('OTHERS', 'https://nautil.us/feed'),
     ]
 
-    def get_cover_url(self):
-        soup = self.index_to_soup('https://www.presspassnow.com/nautilus/issues/')
-        div = soup.find('div', **classes('image-fade_in_back'))
-        if div:
-            self.cover_url = div.find('img', src=True)['src']
-        return getattr(self, 'cover_url', self.cover_url)
-
     def preprocess_html(self, soup):
-        for img in soup.findAll('img', attrs={'data-src': True}):
-            img['src'] = img['data-src'].split('?')[0]
-        for figcaption in soup.findAll('figcaption'):
-            figcaption['id']='fig-c'
-        for ul in soup.findAll('ul', attrs={'class':
-            ['breadcrumb', 'article-list_item-byline', 'channel-article-author', 'article-author']}):
-            ul.name = 'span'
-            for li in ul.findAll('li'):
-                li.name = 'p'
+        for b in soup.findAll('button'):
+            if b.find('img'):
+                b.name = 'div'
+        for img in soup.findAll('img', src=True):
+            if 'favicon' in img['src']:
+                continue
+            res = '?w=600'
+            w = self.recipe_specific_options.get('res')
+            if w and isinstance(w, str):
+                res = '?w=' + w
+            img['src'] = img['src'].split('?')[0] + res
         return soup

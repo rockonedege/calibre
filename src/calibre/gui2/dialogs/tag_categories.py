@@ -1,20 +1,21 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
-from qt.core import (Qt, QApplication, QDialog, QIcon, QListWidgetItem)
+from collections import defaultdict
+from typing import NamedTuple, cast
 
-from collections import namedtuple
+from qt.core import QApplication, QDialog, QIcon, QListWidgetItem, Qt
 
 from calibre.constants import islinux
-from calibre.gui2 import error_dialog, warning_dialog
+from calibre.gui2 import error_dialog, gprefs, warning_dialog
 from calibre.gui2.dialogs.confirm_delete import confirm
 from calibre.gui2.dialogs.tag_categories_ui import Ui_TagCategories
-from calibre.utils.icu import primary_sort_key, strcmp, primary_contains
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import primary_contains, primary_sort_key, strcmp
+from calibre.utils.localization import _
 
 
 class TagCategories(QDialog, Ui_TagCategories):
-
-    '''
+    """
     The structure of user_categories stored in preferences is
       {cat_name: [ [name, category, v], [], [] ]}, cat_name: [ [name, cat, v] ...]}
     where name is the item name, category is where it came from (series, etc),
@@ -22,16 +23,23 @@ class TagCategories(QDialog, Ui_TagCategories):
 
     If you add a category, set v to zero. If you delete a category, ensure that
     both the name and the category match.
-    '''
+    """
 
-    category_icons  = {'authors': QIcon.ic('user_profile.png'),
-                       'series': QIcon.ic('series.png'),
-                       'publisher': QIcon.ic('publisher.png'),
-                       'tags': QIcon.ic('tags.png'),
-                       'languages': QIcon.ic('languages.png')}
+    category_icons = {
+        'authors': QIcon.ic('user_profile.png'),
+        'series': QIcon.ic('series.png'),
+        'publisher': QIcon.ic('publisher.png'),
+        'tags': QIcon.ic('tags.png'),
+        'languages': QIcon.ic('languages.png'),
+    }
 
-    ItemTuple = namedtuple('ItemTuple', 'v k')
-    CategoryNameTuple = namedtuple('CategoryNameTuple', 'n k')
+    class ItemTuple(NamedTuple):
+        v: str
+        k: str
+
+    class CategoryNameTuple(NamedTuple):
+        n: str
+        k: str
 
     def __init__(self, window, db, on_category=None, book_ids=None):
         QDialog.__init__(self, window)
@@ -46,7 +54,7 @@ class TagCategories(QDialog, Ui_TagCategories):
 
         # Remove help icon on title bar
         icon = self.windowIcon()
-        self.setWindowFlags(self.windowFlags()&(~Qt.WindowType.WindowContextHelpButtonHint))
+        self.setWindowFlags(self.windowFlags() & (~Qt.WindowType.WindowContextHelpButtonHint))
         self.setWindowIcon(icon)
 
         self.db = db
@@ -65,10 +73,11 @@ class TagCategories(QDialog, Ui_TagCategories):
         self.all_items = {}
         db_categories = self.db.new_api.get_categories()
         for key, tag in db_categories.items():
-            self.all_items[key] = {'icon': self.category_icons.get(key, self.cc_icon),
-                                   'name': self.db.field_metadata[key]['name'],
-                                   'values': {t.original_name for t in tag}
-                                   }
+            self.all_items[key] = {
+                'icon': self.category_icons.get(key, self.cc_icon),
+                'name': self.db.field_metadata[key]['name'],
+                'values': {t.original_name for t in tag},
+            }
 
         # build the list of all user categories. Filter out keys that no longer exist
         self.user_categories = {}
@@ -93,8 +102,7 @@ class TagCategories(QDialog, Ui_TagCategories):
         self.add_category_button.clicked.connect(self.add_category)
         self.rename_category_button.clicked.connect(self.rename_category)
         self.category_box.currentIndexChanged.connect(self.select_category)
-        self.category_filter_box.currentIndexChanged.connect(
-                                                self.display_filtered_categories)
+        self.category_filter_box.currentIndexChanged.connect(self.display_filtered_categories)
         self.item_filter_box.textEdited.connect(self.apply_filter)
         self.delete_category_button.clicked.connect(self.delete_category)
         if islinux:
@@ -114,10 +122,13 @@ class TagCategories(QDialog, Ui_TagCategories):
         if self.current_cat_name is None:
             self.category_box.setCurrentIndex(0)
             self.select_category(0)
+        self.restore_geometry(gprefs, 'user_category_editor_dialog_geometry')
 
     def copy_category_name_to_clipboard_clicked(self):
         t = self.category_box.itemText(self.category_box.currentIndex())
-        QApplication.clipboard().setText(t)
+        cb = QApplication.clipboard()
+        assert cb is not None
+        cb.setText(t)
 
     def item_tuple(self, key, val):
         return self.ItemTuple(val, key)
@@ -125,11 +136,14 @@ class TagCategories(QDialog, Ui_TagCategories):
     def category_name_tuple(self, key, name):
         return self.CategoryNameTuple(name, key)
 
+    def item_sort_key(self, v):
+        # Add the key so the order of identical items is predictable.
+        # The tab ensures that the values sort together regardless of key
+        return primary_sort_key(v.v + '\t ' + (v.k.removeprefix('#')))
+
     def initialize_category_lists(self):
         cfb = self.category_filter_box
-        current_cat_filter = (self.category_labels[cfb.currentIndex()]
-                              if self.category_labels and cfb.currentIndex() > 0
-                              else '')
+        current_cat_filter = self.category_labels[cfb.currentIndex()] if self.category_labels and cfb.currentIndex() > 0 else ''
 
         # get the values for each category taking into account the VL, then
         # populate the lists taking hidden and filtered categories into account
@@ -137,8 +151,7 @@ class TagCategories(QDialog, Ui_TagCategories):
         self.sorted_items = []
         sorted_categories = []
         item_filter = self.item_filter_box.text()
-        db_categories = self.db.new_api.get_categories(book_ids=self.book_ids if
-                                                       self.filter_by_vl else None)
+        db_categories = self.db.new_api.get_categories(book_ids=self.book_ids if self.filter_by_vl else None)
         for key, tags in db_categories.items():
             if key == 'search' or key.startswith('@'):
                 continue
@@ -153,18 +166,16 @@ class TagCategories(QDialog, Ui_TagCategories):
             self.available_items[key] = av
             sorted_categories.append(self.category_name_tuple(key, self.all_items[key]['name']))
 
-        # Sort the items
-        self.sorted_items.sort(key=lambda v: primary_sort_key(v.v + v.k))
+        self.sorted_items.sort(key=self.item_sort_key)
+        sorted_categories.sort(key=lambda v: primary_sort_key(v.n))
 
-        # Fill in the category names with visible (not hidden) lookup keys
-        sorted_categories.sort(key=lambda v: primary_sort_key(v.n + v.k))
         cfb.blockSignals(True)
         cfb.clear()
         cfb.addItem('', '')
-        for i,v in enumerate(sorted_categories):
+        for i, v in enumerate(sorted_categories):
             cfb.addItem(f'{v.n} ({v.k})', v.k)
             if current_cat_filter == v.k:
-                cfb.setCurrentIndex(i+1)
+                cfb.setCurrentIndex(i + 1)
         cfb.blockSignals(False)
 
     def populate_category_list(self):
@@ -174,13 +185,13 @@ class TagCategories(QDialog, Ui_TagCategories):
         self.category_box.blockSignals(False)
 
     def make_available_list_item(self, key, val):
-        w = QListWidgetItem(self.all_items[key]['icon'], val)
+        w = QListWidgetItem(cast('QIcon', self.all_items[key]['icon']), val)
         w.setData(Qt.ItemDataRole.UserRole, self.item_tuple(key, val))
         w.setToolTip(_('Lookup name: {}').format(key))
         return w
 
     def make_applied_list_item(self, tup):
-        if tup.v not in self.all_items[tup.k]['values']:
+        if tup.v not in cast('set', self.all_items[tup.k]['values']):
             t = tup.v + ' ' + _('(Not in library)')
         elif tup.k not in self.available_items:
             t = tup.v + ' ' + _('(Hidden in Tag browser)')
@@ -188,7 +199,7 @@ class TagCategories(QDialog, Ui_TagCategories):
             t = tup.v + ' ' + _('(Hidden by Virtual library)')
         else:
             t = tup.v
-        w = QListWidgetItem(self.all_items[tup.k]['icon'], t)
+        w = QListWidgetItem(cast('QIcon', self.all_items[tup.k]['icon']), t)
         w.setData(Qt.ItemDataRole.UserRole, tup)
         w.setToolTip(_('Lookup name: {}').format(tup.k))
         return w
@@ -212,21 +223,27 @@ class TagCategories(QDialog, Ui_TagCategories):
         idx = self.category_filter_box.currentIndex()
         filter_key = self.category_filter_box.itemData(idx)
         self.available_items_box.clear()
+        applied = defaultdict(set)
+        for it in self.applied_items:
+            applied[it.k].add(it.v)
         for it in self.sorted_items:
             if idx != 0 and it.k != filter_key:
+                continue
+            if it.v in applied[it.k]:
                 continue
             self.available_items_box.addItem(self.make_available_list_item(it.k, it.v))
 
     def fill_applied_items(self):
         ccn = self.current_cat_name
         if ccn:
-            self.applied_items = [v for v in self.user_categories[ccn]]
-            self.applied_items.sort(key=lambda x:primary_sort_key(x.v + x.k))
+            self.applied_items = list(self.user_categories[ccn])
+            self.applied_items.sort(key=self.item_sort_key)
         else:
             self.applied_items = []
         self.applied_items_box.clear()
         for tup in self.applied_items:
             self.applied_items_box.addItem(self.make_applied_list_item(tup))
+        self.display_filtered_categories()
 
     def apply_button_clicked(self):
         self.apply_tags(node=None)
@@ -236,9 +253,7 @@ class TagCategories(QDialog, Ui_TagCategories):
             return
         nodes = self.available_items_box.selectedItems() if node is None else [node]
         if len(nodes) == 0:
-            warning_dialog(self, _('No items selected'),
-                           _('You must select items to apply'),
-                           show=True, show_copy_button=False)
+            warning_dialog(self, _('No items selected'), _('You must select items to apply'), show=True, show_copy_button=False)
             return
         for node in nodes:
             tup = node.data(Qt.ItemDataRole.UserRole)
@@ -253,9 +268,7 @@ class TagCategories(QDialog, Ui_TagCategories):
             return
         nodes = self.applied_items_box.selectedItems() if node is None else [node]
         if len(nodes) == 0:
-            warning_dialog(self, _('No items selected'),
-                           _('You must select items to unapply'),
-                           show=True, show_copy_button=False)
+            warning_dialog(self, _('No items selected'), _('You must select items to unapply'), show=True, show_copy_button=False)
             return
         for node in nodes:
             tup = node.data(Qt.ItemDataRole.UserRole)
@@ -268,17 +281,30 @@ class TagCategories(QDialog, Ui_TagCategories):
             return
         comps = [c.strip() for c in cat_name.split('.') if c.strip()]
         if len(comps) == 0 or '.'.join(comps) != cat_name:
-            error_dialog(self, _('Invalid name'),
-                    _('That name contains leading or trailing periods, '
-                      'multiple periods in a row or spaces before '
-                      'or after periods.')).exec()
+            error_dialog(
+                self,
+                _('Invalid name'),
+                _('That name contains leading or trailing periods, multiple periods in a row or spaces before or after periods.'),
+            ).exec()
             return False
         for c in sorted(self.user_categories.keys(), key=primary_sort_key):
-            if strcmp(c, cat_name) == 0 or \
-                    (icu_lower(cat_name).startswith(icu_lower(c) + '.') and
-                     not cat_name.startswith(c + '.')):
-                error_dialog(self, _('Name already used'),
-                        _('That name is already used, perhaps with different case.')).exec()
+            if strcmp(c, cat_name) == 0:
+                error_dialog(
+                    self,
+                    _('Name already used'),
+                    _('The user category name is already used, perhaps with different case.'),
+                    det_msg=_('Existing category: {existing}\nNew category name: {new}').format(existing=c, new=cat_name),
+                    show=True,
+                )
+                return False
+            if icu_lower(cat_name).startswith(icu_lower(c) + '.') and not cat_name.startswith(c + '.'):
+                error_dialog(
+                    self,
+                    _('Name already used'),
+                    _('The hierarchical prefix of the new category is already used, perhaps with different case.'),
+                    det_msg=_('Existing prefix: {prefix}\nNew category name: {new}').format(prefix=c, new=cat_name),
+                    show=True,
+                )
                 return False
         if cat_name not in self.user_categories:
             self.user_categories[cat_name] = set()
@@ -297,16 +323,22 @@ class TagCategories(QDialog, Ui_TagCategories):
             return
         comps = [c.strip() for c in cat_name.split('.') if c.strip()]
         if len(comps) == 0 or '.'.join(comps) != cat_name:
-            error_dialog(self, _('Invalid name'),
-                    _('That name contains leading or trailing periods, '
-                      'multiple periods in a row or spaces before '
-                      'or after periods.')).exec()
+            error_dialog(
+                self,
+                _('Invalid name'),
+                _('That name contains leading or trailing periods, multiple periods in a row or spaces before or after periods.'),
+            ).exec()
             return
 
         for c in self.user_categories:
             if strcmp(c, cat_name) == 0:
-                error_dialog(self, _('Name already used'),
-                        _('That name is already used, perhaps with different case.')).exec()
+                error_dialog(
+                    self,
+                    _('Name already used'),
+                    _('The user category name is already used, perhaps with different case.'),
+                    det_msg=_('Existing category: {existing}\nNew category: {new}').format(existing=c, new=cat_name),
+                    show=True,
+                )
                 return
         # The order below is important because of signals
         self.user_categories[cat_name] = self.user_categories[self.current_cat_name]
@@ -319,9 +351,11 @@ class TagCategories(QDialog, Ui_TagCategories):
 
     def delete_category(self):
         if self.current_cat_name is not None:
-            if not confirm('<p>'+_('The current User category will be '
-                           '<b>permanently deleted</b>. Are you sure?') +
-                           '</p>', 'tag_category_delete', self):
+            if not confirm(
+                '<p>' + _('The current User category will be <b>permanently deleted</b>. Are you sure?') + '</p>',
+                'tag_category_delete',
+                self,
+            ):
                 return
             del self.user_categories[self.current_cat_name]
             # self.category_box.removeItem(self.category_box.currentIndex())
@@ -337,7 +371,7 @@ class TagCategories(QDialog, Ui_TagCategories):
         if s:
             self.current_cat_name = str(s)
         else:
-            self.current_cat_name  = None
+            self.current_cat_name = None
         self.fill_applied_items()
 
     def accept(self):
@@ -348,4 +382,9 @@ class TagCategories(QDialog, Ui_TagCategories):
             for tup in self.user_categories[cat]:
                 cat_values.append([tup.v, tup.k, 0])
             self.categories[cat] = cat_values
+        super().save_geometry(gprefs, 'user_category_editor_dialog_geometry')
         QDialog.accept(self)
+
+    def reject(self):
+        super().save_geometry(gprefs, 'user_category_editor_dialog_geometry')
+        QDialog.reject(self)

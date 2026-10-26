@@ -1,32 +1,31 @@
-'''
-Read meta information from pdb files.
-'''
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
-__license__   = 'GPL v3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+"""
+Read meta information from pdb files.
+"""
 
 import re
 
 from calibre.ebooks.metadata import MetaInformation
-from calibre.ebooks.pdb.header import PdbHeaderReader
 from calibre.ebooks.metadata.ereader import get_metadata as get_eReader
-from calibre.ebooks.metadata.plucker import get_metadata as get_plucker
 from calibre.ebooks.metadata.haodoo import get_metadata as get_Haodoo
+from calibre.ebooks.metadata.plucker import get_metadata as get_plucker
+from calibre.ebooks.pdb.header import PdbHeaderReader
+from calibre.utils.localization import _
 
 MREADER = {
-    'PNPdPPrs' : get_eReader,
-    'PNRdPPrs' : get_eReader,
-    'DataPlkr' : get_plucker,
-    'BOOKMTIT' : get_Haodoo,
-    'BOOKMTIU' : get_Haodoo,
+    'PNPdPPrs': get_eReader,
+    'PNRdPPrs': get_eReader,
+    'DataPlkr': get_plucker,
+    'BOOKMTIT': get_Haodoo,
+    'BOOKMTIU': get_Haodoo,
 }
 
 from calibre.ebooks.metadata.ereader import set_metadata as set_eReader
 
 MWRITER = {
-    'PNPdPPrs' : set_eReader,
-    'PNRdPPrs' : set_eReader,
+    'PNPdPPrs': set_eReader,
+    'PNRdPPrs': set_eReader,
 }
 
 
@@ -59,4 +58,4 @@ def set_metadata(stream, mi):
         MetadataWriter(stream, mi)
 
     stream.seek(0)
-    stream.write(re.sub('[^-A-Za-z0-9 ]+', '_', mi.title).ljust(31, '\x00')[:31].encode('ascii', 'replace') + b'\x00')
+    stream.write(re.sub(r'[^-A-Za-z0-9 ]+', '_', mi.title).ljust(31, '\x00')[:31].encode('ascii', 'replace') + b'\x00')

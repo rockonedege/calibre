@@ -2,20 +2,27 @@
 # vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
 # License: GPLv3 Copyright: 2011, Kovid Goyal <kovid at kovidgoyal.net>
 from __future__ import absolute_import, division, print_function, unicode_literals
+
 import hashlib
 import os
 import re
-import regex
 import sys
 import tempfile
 import time
 
+import regex
+
+try:
+    from calibre.utils.localization import _
+except ImportError:
+    pass
+
 try:
     from queue import Empty, Queue
 except ImportError:
-    from Queue import Empty, Queue
+    from Queue import Empty, Queue  # type: ignore
 
-from calibre import as_unicode, replace_entities, prepare_string_for_xml
+from calibre import as_unicode, prepare_string_for_xml, replace_entities
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre.ebooks.metadata import authors_to_string, check_isbn
 from calibre.ebooks.metadata.book.base import Metadata
@@ -27,7 +34,7 @@ NAMESPACES = {
     'openSearch': 'http://a9.com/-/spec/opensearchrss/1.0/',
     'atom': 'http://www.w3.org/2005/Atom',
     'dc': 'http://purl.org/dc/terms',
-    'gd': 'http://schemas.google.com/g/2005'
+    'gd': 'http://schemas.google.com/g/2005',
 }
 
 
@@ -69,12 +76,13 @@ def XPath(x):
     ans = xpath_cache.get(x)
     if ans is None:
         from lxml import etree
+
         ans = xpath_cache[x] = etree.XPath(x, namespaces=NAMESPACES)
     return ans
 
 
 def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
-    from lxml import etree
+    from calibre.utils.xml_parse import safe_xml_fromstring
 
     # total_results  = XPath('//openSearch:totalResults')
     # start_index    = XPath('//openSearch:startIndex')
@@ -100,7 +108,7 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
                 ans = ans[0].text
                 if ans and ans.strip():
                     return ans.strip()
-        except:
+        except Exception:
             log.exception('Programming error:')
         return None
 
@@ -110,10 +118,7 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
             with open(os.path.join(tempfile.gettempdir(), 'Google-' + details_url.split('/')[-1] + '.xml'), 'wb') as f:
                 f.write(raw)
                 print('Book details saved to:', f.name, file=sys.stderr)
-        feed = etree.fromstring(
-            xml_to_unicode(clean_ascii_chars(raw), strip_encoding_pats=True)[0],
-            parser=etree.XMLParser(recover=True, no_network=True, resolve_entities=False)
-        )
+        feed = safe_xml_fromstring(xml_to_unicode(clean_ascii_chars(raw), strip_encoding_pats=True)[0])
         return entry(feed)[0]
 
     if isinstance(entry_, str):
@@ -157,7 +162,7 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
                 if t:
                     isbns.append(t)
     if isbns:
-        mi.isbn = sorted(isbns, key=len)[-1]
+        mi.isbn = max(isbns, key=len)
     mi.all_isbns = isbns
 
     # Tags
@@ -169,7 +174,7 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
             for tag in atags:
                 if tag not in tags:
                     tags.append(tag)
-    except:
+    except Exception:
         log.exception('Failed to parse tags:')
         tags = []
     if tags:
@@ -179,17 +184,16 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
     pubdate = get_text(extra, date)
     if pubdate:
         from calibre.utils.date import parse_date, utcnow
+
         try:
             default = utcnow().replace(day=15)
             mi.pubdate = parse_date(pubdate, assume_utc=True, default=default)
-        except:
+        except Exception:
             log.error('Failed to parse pubdate %r' % pubdate)
 
     # Cover
     mi.has_google_cover = None
-    for x in extra.xpath(
-        '//*[@href and @rel="http://schemas.google.com/books/2008/thumbnail"]'
-    ):
+    for x in extra.xpath('//*[@href and @rel="http://schemas.google.com/books/2008/thumbnail"]'):
         mi.has_google_cover = x.get('href')
         break
 
@@ -200,47 +204,56 @@ def to_metadata(browser, log, entry_, timeout, running_a_test=False):  # {{{
 
 
 class GoogleBooks(Source):
-
     name = 'Google'
-    version = (1, 1, 1)
+    version = (1, 1, 4)
     minimum_calibre_version = (2, 80, 0)
     description = _('Downloads metadata and covers from Google Books')
 
     capabilities = frozenset({'identify'})
     touched_fields = frozenset({
-        'title', 'authors', 'tags', 'pubdate', 'comments', 'publisher',
-        'identifier:isbn', 'identifier:google', 'languages'
+        'title',
+        'authors',
+        'tags',
+        'pubdate',
+        'comments',
+        'publisher',
+        'identifier:isbn',
+        'identifier:google',
+        'languages',
     })
     supports_gzip_transfer_encoding = True
     cached_cover_url_is_reliable = False
 
     GOOGLE_COVER = 'https://books.google.com/books?id=%s&printsec=frontcover&img=1'
 
-    DUMMY_IMAGE_MD5 = frozenset(
-        ('0de4383ebad0adad5eeb8975cd796657', 'a64fa89d7ebc97075c1d363fc5fea71f')
-    )
+    DUMMY_IMAGE_MD5 = frozenset(('0de4383ebad0adad5eeb8975cd796657', 'a64fa89d7ebc97075c1d363fc5fea71f'))
 
     def get_book_url(self, identifiers):  # {{{
         goog = identifiers.get('google', None)
         if goog is not None:
             return ('google', goog, 'https://books.google.com/books?id=%s' % goog)
+
     # }}}
 
     def id_from_url(self, url):  # {{{
         from polyglot.urllib import parse_qs, urlparse
+
         purl = urlparse(url)
         if purl.netloc == 'books.google.com':
             q = parse_qs(purl.query)
             gid = q.get('id')
             if gid:
                 return 'google', gid[0]
+
     # }}}
 
-    def create_query(self, title=None, authors=None, identifiers={}, capitalize_isbn=False):  # {{{
+    def create_query(self, title=None, authors=None, identifiers=None, capitalize_isbn=False):  # {{{
+        if identifiers is None:
+            identifiers = {}
         try:
             from urllib.parse import urlencode
         except ImportError:
-            from urllib import urlencode
+            from urllib import urlencode  # type: ignore
         BASE_URL = 'https://books.google.com/books/feeds/volumes?'
         isbn = check_isbn(identifiers.get('isbn', None))
         q = ''
@@ -272,28 +285,15 @@ class GoogleBooks(Source):
     # }}}
 
     def download_cover(  # {{{
-        self,
-        log,
-        result_queue,
-        abort,
-        title=None,
-        authors=None,
-        identifiers={},
-        timeout=30,
-        get_best_cover=False
+        self, log, result_queue, abort, title=None, authors=None, identifiers=None, timeout=30, get_best_cover=False
     ):
+        if identifiers is None:
+            identifiers = {}
         cached_url = self.get_cached_cover_url(identifiers)
         if cached_url is None:
             log.info('No cached cover found, running identify')
             rq = Queue()
-            self.identify(
-                log,
-                rq,
-                abort,
-                title=title,
-                authors=authors,
-                identifiers=identifiers
-            )
+            self.identify(log, rq, abort, title=title, authors=authors, identifiers=identifiers)
             if abort.is_set():
                 return
             results = []
@@ -302,11 +302,7 @@ class GoogleBooks(Source):
                     results.append(rq.get_nowait())
                 except Empty:
                     break
-            results.sort(
-                key=self.identify_results_keygen(
-                    title=title, authors=authors, identifiers=identifiers
-                )
-            )
+            results.sort(key=self.identify_results_keygen(title=title, authors=authors, identifiers=identifiers))
             for mi in results:
                 cached_url = self.get_cached_cover_url(mi.identifiers)
                 if cached_url is not None:
@@ -361,43 +357,34 @@ class GoogleBooks(Source):
             ans.comments = pretty_google_books_comments(ans.comments)
         self.clean_downloaded_metadata(ans)
         return ans
+
     # }}}
 
     def get_all_details(  # {{{
-        self,
-        br,
-        log,
-        entries,
-        abort,
-        result_queue,
-        timeout
+        self, br, log, entries, abort, result_queue, timeout
     ):
         from lxml import etree
+
         for relevance, i in enumerate(entries):
             try:
                 ans = self.postprocess_downloaded_google_metadata(to_metadata(br, log, i, timeout, self.running_a_test), relevance)
                 if isinstance(ans, Metadata):
                     result_queue.put(ans)
             except Exception:
-                log.exception(
-                    'Failed to get metadata for identify entry:', etree.tostring(i)
-                )
+                log.exception('Failed to get metadata for identify entry:', etree.tostring(i))
             if abort.is_set():
                 break
 
     # }}}
 
     def identify_via_web_search(  # {{{
-        self,
-        log,
-        result_queue,
-        abort,
-        title=None,
-        authors=None,
-        identifiers={},
-        timeout=30
+        self, log, result_queue, abort, title=None, authors=None, identifiers=None, timeout=30
     ):
         from calibre.utils.filenames import ascii_text
+        from polyglot.urllib import urlparse
+
+        if identifiers is None:
+            identifiers = {}
         isbn = check_isbn(identifiers.get('isbn', None))
         q = []
         strip_punc_pat = regex.compile(r'[\p{C}|\p{M}|\p{P}|\p{S}|\p{Z}]+', regex.UNICODE)
@@ -430,17 +417,24 @@ class GoogleBooks(Source):
         if not q and not google_ids:
             return None
         from calibre.ebooks.metadata.sources.update import search_engines_module
+
         se = search_engines_module()
         br = se.google_specialize_browser(se.browser())
         if not has_google_id:
-            url = se.google_format_query(q, tbm='bks')
+            url = se.google_format_query(q, site='books.google.com')
             log('Making query:', url)
             r = []
             root = se.query(br, url, 'google', timeout=timeout, save_raw=r.append)
             pat = re.compile(r'id=([^&]+)')
             for q in se.google_parse_results(root, r[0], log=log, ignore_uncached=False):
                 m = pat.search(q.url)
-                if m is None or not q.url.startswith('https://books.google'):
+                if m is None or not q.url:
+                    continue
+                try:
+                    purl = urlparse(q.url)
+                except Exception:
+                    continue
+                if not purl.hostname.startswith('books.google'):
                     continue
                 google_ids.append(m.group(1))
 
@@ -457,37 +451,48 @@ class GoogleBooks(Source):
                 if isinstance(ans, Metadata):
                     if isbn:
                         if isbn not in ans.all_isbns:
-                            log('Excluding', ans.title, 'by', authors_to_string(ans.authors), 'as it does not match the ISBN:', isbn,
-                                'not in', ' '.join(ans.all_isbns))
+                            log(
+                                'Excluding',
+                                ans.title,
+                                'by',
+                                authors_to_string(ans.authors),
+                                'as it does not match the ISBN:',
+                                isbn,
+                                'not in',
+                                ' '.join(ans.all_isbns),
+                            )
                             continue
                     elif check_tokens:
                         candidate = set(to_check_tokens(*self.get_title_tokens(ans.title)))
                         candidate |= set(to_check_tokens(*self.get_author_tokens(ans.authors)))
                         if candidate.intersection(check_tokens) != check_tokens:
-                            log('Excluding', ans.title, 'by', authors_to_string(ans.authors), 'as it does not match the query')
+                            log(
+                                'Excluding',
+                                ans.title,
+                                'by',
+                                authors_to_string(ans.authors),
+                                'as it does not match the query',
+                            )
                             continue
                     ans = self.postprocess_downloaded_google_metadata(ans, relevance)
                     result_queue.put(ans)
                     found = True
-            except:
+            except Exception:
                 log.exception('Failed to get metadata for google books id:', gid)
             if abort.is_set():
                 break
         if not found and isbn and (title or authors):
             return self.identify_via_web_search(log, result_queue, abort, title, authors, {}, timeout)
+
     # }}}
 
     def identify(  # {{{
-        self,
-        log,
-        result_queue,
-        abort,
-        title=None,
-        authors=None,
-        identifiers={},
-        timeout=30
+        self, log, result_queue, abort, title=None, authors=None, identifiers=None, timeout=30
     ):
-        from lxml import etree
+        from calibre.utils.xml_parse import safe_xml_fromstring
+
+        if identifiers is None:
+            identifiers = {}
         entry = XPath('//atom:entry')
         identifiers = identifiers.copy()
         br = self.browser
@@ -502,9 +507,7 @@ class GoogleBooks(Source):
                 log.exception('Failed to get metadata for Google identifier:', identifiers['google'])
             del identifiers['google']
 
-        query = self.create_query(
-            title=title, authors=authors, identifiers=identifiers
-        )
+        query = self.create_query(title=title, authors=authors, identifiers=identifiers)
         if not query:
             log.error('Insufficient metadata to construct query')
             return
@@ -518,14 +521,12 @@ class GoogleBooks(Source):
                 return False, as_unicode(e)
 
             try:
-                feed = etree.fromstring(
-                    xml_to_unicode(clean_ascii_chars(raw), strip_encoding_pats=True)[0],
-                    parser=etree.XMLParser(recover=True, no_network=True, resolve_entities=False)
-                )
+                feed = safe_xml_fromstring(xml_to_unicode(clean_ascii_chars(raw), strip_encoding_pats=True)[0])
                 return True, entry(feed)
             except Exception as e:
                 log.exception('Failed to parse identify results')
                 return False, as_unicode(e)
+
         ok, entries = make_query(query)
         if not ok:
             return entries
@@ -543,44 +544,36 @@ class GoogleBooks(Source):
 if __name__ == '__main__':  # tests {{{
     # To run these test use:
     # calibre-debug src/calibre/ebooks/metadata/sources/google.py
-    from calibre.ebooks.metadata.sources.test import (
-        authors_test, test_identify_plugin, title_test
-    )
+    from calibre.ebooks.metadata.sources.test import authors_test, test_identify_plugin, title_test
+
     tests = [
-    ({
-        'identifiers': {'google': 's7NIrgEACAAJ'},
-    }, [title_test('Ride Every Stride', exact=False)]),
-
-    ({
-        'identifiers': {'isbn': '0743273567'},
-        'title': 'Great Gatsby',
-        'authors': ['Fitzgerald']
-    }, [
-        title_test('The great gatsby', exact=True),
-        authors_test(['F. Scott Fitzgerald'])
-    ]),
-
-    ({
-        'title': 'Flatland',
-        'authors': ['Abbott']
-    }, [title_test('Flatland', exact=False)]),
-
-    ({
-        'title': 'The Blood Red Indian Summer: A Berger and Mitry Mystery',
-        'authors': ['David Handler'],
-    }, [title_test('The Blood Red Indian Summer: A Berger and Mitry Mystery')
-    ]),
-
-    ({
-        # requires using web search to find the book
-        'title': 'Dragon Done It',
-        'authors': ['Eric Flint'],
-    }, [
-        title_test('The dragon done it', exact=True),
-        authors_test(['Eric Flint', 'Mike Resnick'])
-    ]),
-
+        (
+            {
+                'identifiers': {'google': 's7NIrgEACAAJ'},
+            },
+            [title_test('Ride Every Stride', exact=False)],
+        ),
+        (
+            {'identifiers': {'isbn': '0743273567'}, 'title': 'Great Gatsby', 'authors': ['Fitzgerald']},
+            [title_test('The great gatsby', exact=True), authors_test(['F. Scott Fitzgerald'])],
+        ),
+        ({'title': 'Flatland', 'authors': ['Abbott']}, [title_test('Flatland', exact=False)]),
+        (
+            {
+                'title': 'The Blood Red Indian Summer: A Berger and Mitry Mystery',
+                'authors': ['David Handler'],
+            },
+            [title_test('The Blood Red Indian Summer: A Berger and Mitry Mystery')],
+        ),
+        (
+            {
+                # requires using web search to find the book, but web search is broken currently
+                'title': 'Dragon Done It',
+                'authors': ['Eric Flint'],
+            },
+            [title_test('The dragon done it', exact=True), authors_test(['Eric Flint', 'Mike Resnick'])],
+        ),
     ]
-    test_identify_plugin(GoogleBooks.name, tests[:])
+    test_identify_plugin(GoogleBooks.name, tests)
 
 # }}}

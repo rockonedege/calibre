@@ -1,19 +1,13 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid at kovidgoyal.net>
 
+import hashlib
+import numbers
 
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+from qt.core import QBuffer, QByteArray, QColor, QImage, QPainter, Qt, qRgba
 
-import hashlib, numbers
-from polyglot.builtins import iteritems
-
-from qt.core import QBuffer, QByteArray, QImage, Qt, QColor, qRgba, QPainter
-
-from calibre.constants import (__appname__, __version__)
-from calibre.ebooks.pdf.render.common import (
-    Reference, EOL, serialize, Stream, Dictionary, String, Name, Array,
-    fmtnum)
+from calibre.constants import __appname__, __version__
+from calibre.ebooks.pdf.render.common import EOL, Array, Dictionary, Name, Reference, Stream, String, fmtnum, serialize
 from calibre.ebooks.pdf.render.fonts import FontManager
 from calibre.ebooks.pdf.render.links import Links
 from calibre.utils.date import utcnow
@@ -23,7 +17,6 @@ PDFVER = b'%PDF-1.4'  # 1.4 is needed for XMP metadata
 
 
 class IndirectObjects:
-
     def __init__(self):
         self._list = []
         self._map = {}
@@ -44,8 +37,8 @@ class IndirectObjects:
 
     def write_obj(self, stream, num, obj):
         stream.write(EOL)
-        self._offsets[num-1] = stream.tell()
-        stream.write('%d 0 obj'%num)
+        self._offsets[num - 1] = stream.tell()
+        stream.write(f'{num} 0 obj')
         stream.write(EOL)
         serialize(obj, stream)
         if stream.last_char != EOL:
@@ -56,31 +49,30 @@ class IndirectObjects:
     def __getitem__(self, o):
         try:
             return self._map[id(self._list[o] if isinstance(o, numbers.Integral) else o)]
-        except (KeyError, IndexError):
-            raise KeyError('The object %r was not found'%o)
+        except KeyError, IndexError:
+            raise KeyError(f'The object {o!r} was not found')
 
     def pdf_serialize(self, stream):
         for i, obj in enumerate(self._list):
             offset = self._offsets[i]
             if offset is None:
-                self.write_obj(stream, i+1, obj)
+                self.write_obj(stream, i + 1, obj)
 
     def write_xref(self, stream):
         self.xref_offset = stream.tell()
-        stream.write(b'xref'+EOL)
-        stream.write('0 %d'%(1+len(self._offsets)))
+        stream.write(b'xref' + EOL)
+        stream.write(f'0 {1 + len(self._offsets)}')
         stream.write(EOL)
-        stream.write('%010d 65535 f '%0)
+        stream.write(f'{0:010} 65535 f ')
         stream.write(EOL)
 
         for offset in self._offsets:
-            line = '%010d 00000 n '%offset
+            line = f'{offset:010} 00000 n '
             stream.write(line.encode('ascii') + EOL)
         return self.xref_offset
 
 
 class Page(Stream):
-
     def __init__(self, parentref, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.page_dict = Dictionary({
@@ -94,48 +86,47 @@ class Page(Stream):
 
     def set_opacity(self, opref):
         if opref not in self.opacities:
-            self.opacities[opref] = 'Opa%d'%len(self.opacities)
+            self.opacities[opref] = f'Opa{len(self.opacities)}'
         name = self.opacities[opref]
         serialize(Name(name), self)
         self.write(b' gs ')
 
     def add_font(self, fontref):
         if fontref not in self.fonts:
-            self.fonts[fontref] = 'F%d'%len(self.fonts)
+            self.fonts[fontref] = f'F{len(self.fonts)}'
         return self.fonts[fontref]
 
     def add_image(self, imgref):
         if imgref not in self.xobjects:
-            self.xobjects[imgref] = 'Image%d'%len(self.xobjects)
+            self.xobjects[imgref] = f'Image{len(self.xobjects)}'
         return self.xobjects[imgref]
 
     def add_pattern(self, patternref):
         if patternref not in self.patterns:
-            self.patterns[patternref] = 'Pat%d'%len(self.patterns)
+            self.patterns[patternref] = f'Pat{len(self.patterns)}'
         return self.patterns[patternref]
 
     def add_resources(self):
         r = Dictionary()
         if self.opacities:
             extgs = Dictionary()
-            for opref, name in iteritems(self.opacities):
+            for opref, name in self.opacities.items():
                 extgs[name] = opref
             r['ExtGState'] = extgs
         if self.fonts:
             fonts = Dictionary()
-            for ref, name in iteritems(self.fonts):
+            for ref, name in self.fonts.items():
                 fonts[name] = ref
             r['Font'] = fonts
         if self.xobjects:
             xobjects = Dictionary()
-            for ref, name in iteritems(self.xobjects):
+            for ref, name in self.xobjects.items():
                 xobjects[name] = ref
             r['XObject'] = xobjects
         if self.patterns:
-            r['ColorSpace'] = Dictionary({'PCSp':Array(
-                [Name('Pattern'), Name('DeviceRGB')])})
+            r['ColorSpace'] = Dictionary({'PCSp': Array([Name('Pattern'), Name('DeviceRGB')])})
             patterns = Dictionary()
-            for ref, name in iteritems(self.patterns):
+            for ref, name in self.patterns.items():
                 patterns[name] = ref
             r['Pattern'] = patterns
         if r:
@@ -152,7 +143,6 @@ class Page(Stream):
 
 
 class Path:
-
     def __init__(self):
         self.ops = []
 
@@ -170,18 +160,17 @@ class Path:
 
 
 class Catalog(Dictionary):
-
     def __init__(self, pagetree):
-        super().__init__({'Type':Name('Catalog'),
-            'Pages': pagetree})
+        super().__init__({'Type': Name('Catalog'), 'Pages': pagetree})
 
 
 class PageTree(Dictionary):
-
     def __init__(self, page_size):
-        super().__init__({'Type':Name('Pages'),
-            'MediaBox':Array([0, 0, page_size[0], page_size[1]]),
-            'Kids':Array(), 'Count':0,
+        super().__init__({
+            'Type': Name('Pages'),
+            'MediaBox': Array([0, 0, page_size[0], page_size[1]]),
+            'Kids': Array(),
+            'Count': 0,
         })
 
     def add_page(self, pageref):
@@ -189,7 +178,7 @@ class PageTree(Dictionary):
         self['Count'] += 1
 
     def get_ref(self, num):
-        return self['Kids'][num-1]
+        return self['Kids'][num - 1]
 
     def get_num(self, pageref):
         try:
@@ -199,7 +188,6 @@ class PageTree(Dictionary):
 
 
 class HashingStream:
-
     def __init__(self, f):
         self.f = f
         self.tell = f.tell
@@ -217,7 +205,6 @@ class HashingStream:
 
 
 class Image(Stream):
-
     def __init__(self, data, w, h, depth, mask, soft_mask, dct):
         Stream.__init__(self)
         self.width, self.height, self.depth = w, h, depth
@@ -230,7 +217,7 @@ class Image(Stream):
 
     def add_extra_keys(self, d):
         d['Type'] = Name('XObject')
-        d['Subtype']=  Name('Image')
+        d['Subtype'] = Name('Image')
         d['Width'] = self.width
         d['Height'] = self.height
         if self.depth == 1:
@@ -238,8 +225,7 @@ class Image(Stream):
             d['Decode'] = Array([1, 0])
         else:
             d['BitsPerComponent'] = 8
-            d['ColorSpace'] = Name('Device' + ('RGB' if self.depth == 32 else
-                                               'Gray'))
+            d['ColorSpace'] = Name('Device' + ('RGB' if self.depth == 32 else 'Gray'))
         if self.mask is not None:
             d['Mask'] = self.mask
         if self.soft_mask is not None:
@@ -247,10 +233,10 @@ class Image(Stream):
 
 
 class Metadata(Stream):
-
     def __init__(self, mi):
         Stream.__init__(self)
         from calibre.ebooks.metadata.xmp import metadata_to_xmp_packet
+
         self.write(metadata_to_xmp_packet(mi))
 
     def add_extra_keys(self, d):
@@ -259,37 +245,34 @@ class Metadata(Stream):
 
 
 class PDFStream:
-
     PATH_OPS = {
         # stroke fill   fill-rule
-        (False, False, 'winding')  : 'n',
-        (False, False, 'evenodd')  : 'n',
-        (False, True,  'winding')  : 'f',
-        (False, True,  'evenodd')  : 'f*',
-        (True,  False, 'winding')  : 'S',
-        (True,  False, 'evenodd')  : 'S',
-        (True,  True,  'winding')  : 'B',
-        (True,  True,  'evenodd')  : 'B*',
+        (False, False, 'winding'): 'n',
+        (False, False, 'evenodd'): 'n',
+        (False, True, 'winding'): 'f',
+        (False, True, 'evenodd'): 'f*',
+        (True, False, 'winding'): 'S',
+        (True, False, 'evenodd'): 'S',
+        (True, True, 'winding'): 'B',
+        (True, True, 'evenodd'): 'B*',
     }
 
-    def __init__(self, stream, page_size, compress=False, mark_links=False,
-                 debug=print):
+    def __init__(self, stream, page_size, compress=False, mark_links=False, debug=print):
         self.stream = HashingStream(stream)
         self.compress = compress
         self.write_line(PDFVER)
         self.write_line('%íì¦"'.encode())
-        creator = ('%s %s [https://calibre-ebook.com]'%(__appname__,
-                                    __version__))
-        self.write_line('%% Created by %s'%creator)
+        creator = f'{__appname__} {__version__} [https://calibre-ebook.com]'
+        self.write_line(f'% Created by {creator}')
         self.objects = IndirectObjects()
         self.objects.add(PageTree(page_size))
         self.objects.add(Catalog(self.page_tree))
         self.current_page = Page(self.page_tree, compress=self.compress)
         self.info = Dictionary({
-            'Creator':String(creator),
-            'Producer':String(creator),
+            'Creator': String(creator),
+            'Producer': String(creator),
             'CreationDate': utcnow(),
-                                })
+        })
         self.stroke_opacities, self.fill_opacities = {}, {}
         self.font_manager = FontManager(self.objects, self.compress)
         self.image_cache = {}
@@ -299,8 +282,13 @@ class PDFStream:
         self.links = Links(self, mark_links, page_size)
         i = QImage(1, 1, QImage.Format.Format_ARGB32)
         i.fill(qRgba(0, 0, 0, 255))
-        self.alpha_bit = i.constBits().asstring(4).find(b'\xff')
-        self.bw_image_color_table = frozenset((QColor(Qt.GlobalColor.black).rgba(), QColor(Qt.GlobalColor.white).rgba()))
+        i_bits = i.constBits()
+        assert i_bits is not None
+        self.alpha_bit = i_bits.asstring(4).find(b'\xff')
+        self.bw_image_color_table = frozenset((
+            QColor(Qt.GlobalColor.black).rgba(),
+            QColor(Qt.GlobalColor.white).rgba(),
+        ))
 
     @property
     def page_tree(self):
@@ -347,7 +335,7 @@ class PDFStream:
         self.current_page.write_line('Q q')
 
     def draw_rect(self, x, y, width, height, stroke=True, fill=False):
-        self.current_page.write('%s re '%' '.join(map(fmtnum, (x, y, width, height))))
+        self.current_page.write('{} re '.format(' '.join(map(fmtnum, (x, y, width, height)))))
         self.current_page.write_line(self.PATH_OPS[(stroke, fill, 'winding')])
 
     def write_path(self, path):
@@ -355,8 +343,7 @@ class PDFStream:
             if i != 0:
                 self.current_page.write_line()
             for x in op:
-                self.current_page.write(
-                (fmtnum(x) if isinstance(x, numbers.Number) else x) + ' ')
+                self.current_page.write((fmtnum(x) if isinstance(x, numbers.Number) else x) + ' ')
 
     def draw_path(self, path, stroke=True, fill=False, fill_rule='winding'):
         if not path.ops:
@@ -376,14 +363,14 @@ class PDFStream:
 
     def set_stroke_opacity(self, opacity):
         if opacity not in self.stroke_opacities:
-            op = Dictionary({'Type':Name('ExtGState'), 'CA': opacity})
+            op = Dictionary({'Type': Name('ExtGState'), 'CA': opacity})
             self.stroke_opacities[opacity] = self.objects.add(op)
         self.current_page.set_opacity(self.stroke_opacities[opacity])
 
     def set_fill_opacity(self, opacity):
         opacity = float(opacity)
         if opacity not in self.fill_opacities:
-            op = Dictionary({'Type':Name('ExtGState'), 'ca': opacity})
+            op = Dictionary({'Type': Name('ExtGState'), 'ca': opacity})
             self.fill_opacities[opacity] = self.objects.add(op)
         self.current_page.set_opacity(self.fill_opacities[opacity])
 
@@ -399,18 +386,16 @@ class PDFStream:
         name = self.current_page.add_font(fontref)
         self.current_page.write(b'BT ')
         serialize(Name(name), self.current_page)
-        self.current_page.write(' %s Tf '%fmtnum(size))
-        self.current_page.write('%s Tm '%' '.join(map(fmtnum, transform)))
+        self.current_page.write(f' {fmtnum(size)} Tf ')
+        self.current_page.write('{} Tm '.format(' '.join(map(fmtnum, transform))))
         for x, y, glyph_id in glyphs:
-            self.current_page.write_raw(('%s %s Td <%04X> Tj '%(
-                fmtnum(x), fmtnum(y), glyph_id)).encode('ascii'))
+            self.current_page.write_raw((f'{fmtnum(x)} {fmtnum(y)} Td <{glyph_id:04X}> Tj ').encode('ascii'))
         self.current_page.write_line(b' ET')
 
     def get_image(self, cache_key):
         return self.image_cache.get(cache_key, None)
 
-    def write_image(self, data, w, h, depth, dct=False, mask=None,
-                    soft_mask=None, cache_key=None):
+    def write_image(self, data, w, h, depth, dct=False, mask=None, soft_mask=None, cache_key=None):
         imgobj = Image(data, w, h, depth, mask, soft_mask, dct)
         self.image_cache[cache_key] = r = self.objects.add(imgobj)
         self.objects.commit(r, self.stream)
@@ -430,10 +415,9 @@ class PDFStream:
             if fmt == QImage.Format.Format_MonoLSB:
                 image = image.convertToFormat(QImage.Format.Format_Mono)
             fmt = QImage.Format.Format_Mono
-        else:
-            if (fmt != QImage.Format.Format_RGB32 and fmt != QImage.Format.Format_ARGB32):
-                image = image.convertToFormat(QImage.Format.Format_ARGB32)
-                fmt = QImage.Format.Format_ARGB32
+        elif fmt not in (QImage.Format.Format_RGB32, QImage.Format.Format_ARGB32):
+            image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            fmt = QImage.Format.Format_ARGB32
 
         w = image.width()
         h = image.height()
@@ -441,14 +425,18 @@ class PDFStream:
 
         if fmt == QImage.Format.Format_Mono:
             bytes_per_line = (w + 7) >> 3
-            data = image.constBits().asstring(bytes_per_line * h)
+            mono_bits = image.constBits()
+            assert mono_bits is not None
+            data = mono_bits.asstring(bytes_per_line * h)
             return self.write_image(data, w, h, d, cache_key=cache_key)
 
         has_alpha = False
         soft_mask = None
 
         if fmt == QImage.Format.Format_ARGB32:
-            tmask = image.constBits().asstring(4*w*h)[self.alpha_bit::4]
+            argb_bits = image.constBits()
+            assert argb_bits is not None
+            tmask = argb_bits.asstring(4 * w * h)[self.alpha_bit :: 4]
             sdata = bytearray(tmask)
             vals = set(sdata)
             vals.discard(255)  # discard opaque pixels
@@ -471,8 +459,7 @@ class PDFStream:
         if has_alpha:
             soft_mask = self.write_image(tmask, w, h, 8)
 
-        return self.write_image(data, w, h, 32, dct=True,
-                                soft_mask=soft_mask, cache_key=cache_key)
+        return self.write_image(data, w, h, 32, dct=True, soft_mask=soft_mask, cache_key=cache_key)
 
     def add_pattern(self, pattern):
         if pattern.cache_key not in self.pattern_cache:
@@ -498,12 +485,10 @@ class PDFStream:
         if color is not None and pattern is None:
             wl(' '.join(map(fmtnum, color)) + (' RG' if stroke else ' rg'))
         elif color is None and pattern is not None:
-            wl('/Pattern %s /%s %s'%('CS' if stroke else 'cs', pattern,
-                                     'SCN' if stroke else 'scn'))
+            wl('/Pattern {} /{} {}'.format('CS' if stroke else 'cs', pattern, 'SCN' if stroke else 'scn'))
         elif color is not None and pattern is not None:
             col = ' '.join(map(fmtnum, color))
-            wl('/PCSp %s %s /%s %s'%('CS' if stroke else 'cs', col, pattern,
-                                     'SCN' if stroke else 'scn'))
+            wl('/PCSp {} {} /{} {}'.format('CS' if stroke else 'cs', col, pattern, 'SCN' if stroke else 'scn'))
 
     def apply_fill(self, color=None, pattern=None, opacity=None):
         if opacity is not None:
@@ -526,9 +511,13 @@ class PDFStream:
         startxref = self.objects.write_xref(self.stream)
         file_id = String(as_unicode(self.stream.hashobj.hexdigest()))
         self.write_line('trailer')
-        trailer = Dictionary({'Root':self.catalog, 'Size':len(self.objects)+1,
-                              'ID':Array([file_id, file_id]), 'Info':inforef})
+        trailer = Dictionary({
+            'Root': self.catalog,
+            'Size': len(self.objects) + 1,
+            'ID': Array([file_id, file_id]),
+            'Info': inforef,
+        })
         serialize(trailer, self.stream)
         self.write_line('startxref')
-        self.write_line('%d'%startxref)
+        self.write_line(f'{startxref}')
         self.stream.write('%%EOF')

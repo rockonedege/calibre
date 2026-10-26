@@ -1,25 +1,21 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid at kovidgoyal.net>
 
 import traceback
 from collections import OrderedDict
-from operator import itemgetter
 from functools import partial
+from operator import itemgetter
 
-from calibre.utils.icu import safe_chr, ord_string
 from calibre.utils.fonts.sfnt.container import Sfnt
-from calibre.utils.fonts.sfnt.errors import UnsupportedFont, NoGlyphs
-from polyglot.builtins import iteritems, itervalues
+from calibre.utils.fonts.sfnt.errors import NoGlyphs, UnsupportedFont
+from calibre.utils.icu import ord_string, safe_chr
+from calibre.utils.resources import get_path as P
 
 # TrueType outlines {{{
 
 
 def resolve_glyphs(loca, glyf, character_map, extra_glyphs):
-    unresolved_glyphs = set(itervalues(character_map)) | extra_glyphs
+    unresolved_glyphs = set(character_map.values()) | extra_glyphs
     unresolved_glyphs.add(0)  # We always want the .notdef glyph
     resolved_glyphs = {}
 
@@ -27,7 +23,7 @@ def resolve_glyphs(loca, glyf, character_map, extra_glyphs):
         glyph_id = unresolved_glyphs.pop()
         try:
             offset, length = loca.glyph_location(glyph_id)
-        except (IndexError, ValueError, KeyError, TypeError):
+        except IndexError, ValueError, KeyError, TypeError:
             continue
         glyph = glyf.glyph_data(offset, length)
         resolved_glyphs[glyph_id] = glyph
@@ -35,7 +31,7 @@ def resolve_glyphs(loca, glyf, character_map, extra_glyphs):
             if gid not in resolved_glyphs:
                 unresolved_glyphs.add(gid)
 
-    return OrderedDict(sorted(iteritems(resolved_glyphs), key=itemgetter(0)))
+    return OrderedDict(sorted(resolved_glyphs.items(), key=itemgetter(0)))
 
 
 def subset_truetype(sfnt, character_map, extra_glyphs):
@@ -50,11 +46,10 @@ def subset_truetype(sfnt, character_map, extra_glyphs):
 
     resolved_glyphs = resolve_glyphs(loca, glyf, character_map, extra_glyphs)
     if not resolved_glyphs or set(resolved_glyphs) == {0}:
-        raise NoGlyphs('This font has no glyphs for the specified character '
-                'set, subsetting it is pointless')
+        raise NoGlyphs('This font has no glyphs for the specified character set, subsetting it is pointless')
 
     # Keep only character codes that have resolved glyphs
-    for code, glyph_id in tuple(iteritems(character_map)):
+    for code, glyph_id in tuple(character_map.items()):
         if glyph_id not in resolved_glyphs:
             del character_map[code]
 
@@ -66,6 +61,7 @@ def subset_truetype(sfnt, character_map, extra_glyphs):
     head.index_to_loc_format = 0 if loca.fmt == 'H' else 1
     head.update()
     maxp.num_glyphs = len(loca.offset_map) - 1
+
 
 # }}}
 
@@ -91,9 +87,21 @@ def do_warn(warnings, *args):
 
 def pdf_subset(sfnt, glyphs):
     for tag in tuple(sfnt.tables):
-        if tag not in {b'hhea', b'head', b'hmtx', b'maxp',
-                       b'OS/2', b'post', b'cvt ', b'fpgm', b'glyf', b'loca',
-                       b'prep', b'CFF ', b'VORG'}:
+        if tag not in {
+            b'hhea',
+            b'head',
+            b'hmtx',
+            b'maxp',
+            b'OS/2',
+            b'post',
+            b'cvt ',
+            b'fpgm',
+            b'glyf',
+            b'loca',
+            b'prep',
+            b'CFF ',
+            b'VORG',
+        }:
             # Remove non core tables since they are unused in PDF rendering
             del sfnt[tag]
     if b'loca' in sfnt and b'glyf' in sfnt:
@@ -103,8 +111,7 @@ def pdf_subset(sfnt, glyphs):
         # PostScript Outlines
         subset_postscript(sfnt, {}, glyphs)
     else:
-        raise UnsupportedFont('This font does not contain TrueType '
-                'or PostScript outlines')
+        raise UnsupportedFont('This font does not contain TrueType or PostScript outlines')
 
 
 def safe_ord(x):
@@ -121,7 +128,7 @@ def subset(raw, individual_chars, ranges=(), warnings=None):
         except ValueError:
             continue
     for r in ranges:
-        chars |= set(range(safe_ord(r[0]), safe_ord(r[1])+1))
+        chars |= set(range(safe_ord(r[0]), safe_ord(r[1]) + 1))
 
     # Always add the space character for ease of use from the command line
     if safe_ord(' ') not in chars:
@@ -136,11 +143,40 @@ def subset(raw, individual_chars, ranges=(), warnings=None):
 
     # Remove non core tables as they aren't likely to be used by renderers
     # anyway
-    core_tables = {b'cmap', b'hhea', b'head', b'hmtx', b'maxp', b'name',
-            b'OS/2', b'post', b'cvt ', b'fpgm', b'glyf', b'loca', b'prep',
-            b'CFF ', b'VORG', b'EBDT', b'EBLC', b'EBSC', b'BASE', b'GSUB',
-            b'GPOS', b'GDEF', b'JSTF', b'gasp', b'hdmx', b'kern', b'LTSH',
-            b'PCLT', b'VDMX', b'vhea', b'vmtx', b'MATH'}
+    core_tables = {
+        b'cmap',
+        b'hhea',
+        b'head',
+        b'hmtx',
+        b'maxp',
+        b'name',
+        b'OS/2',
+        b'post',
+        b'cvt ',
+        b'fpgm',
+        b'glyf',
+        b'loca',
+        b'prep',
+        b'CFF ',
+        b'VORG',
+        b'EBDT',
+        b'EBLC',
+        b'EBSC',
+        b'BASE',
+        b'GSUB',
+        b'GPOS',
+        b'GDEF',
+        b'JSTF',
+        b'gasp',
+        b'hdmx',
+        b'kern',
+        b'LTSH',
+        b'PCLT',
+        b'VDMX',
+        b'vhea',
+        b'vmtx',
+        b'MATH',
+    }
     for tag in list(sfnt):
         if tag not in core_tables:
             del sfnt[tag]
@@ -161,9 +197,9 @@ def subset(raw, individual_chars, ranges=(), warnings=None):
         gsub = sfnt[b'GSUB']
         try:
             gsub.decompile()
-            extra_glyphs = gsub.all_substitutions(itervalues(character_map))
+            extra_glyphs = gsub.all_substitutions(character_map.values())
         except UnsupportedFont as e:
-            warn('Usupported GSUB table: %s'%e)
+            warn(f'Usupported GSUB table: {e}')
         except Exception:
             warn('Failed to decompile GSUB table:', traceback.format_exc())
 
@@ -174,31 +210,33 @@ def subset(raw, individual_chars, ranges=(), warnings=None):
         # PostScript Outlines
         subset_postscript(sfnt, character_map, extra_glyphs)
     else:
-        raise UnsupportedFont('This font does not contain TrueType '
-                'or PostScript outlines')
+        raise UnsupportedFont('This font does not contain TrueType or PostScript outlines')
 
     # Restrict the cmap table to only contain entries for the resolved glyphs
     cmap.set_character_map(character_map)
 
     if b'kern' in sfnt:
         try:
-            sfnt[b'kern'].restrict_to_glyphs(frozenset(itervalues(character_map)))
+            sfnt[b'kern'].restrict_to_glyphs(frozenset(character_map.values()))
         except UnsupportedFont as e:
-            warn('kern table unsupported, ignoring: %s'%e)
+            warn(f'kern table unsupported, ignoring: {e}')
         except Exception:
-            warn('Subsetting of kern table failed, ignoring:',
-                    traceback.format_exc())
+            warn('Subsetting of kern table failed, ignoring:', traceback.format_exc())
 
     raw, new_sizes = sfnt()
     return raw, old_sizes, new_sizes
+
 
 # CLI {{{
 
 
 def option_parser():
     import textwrap
+
     from calibre.utils.config import OptionParser
-    parser = OptionParser(usage=textwrap.dedent('''\
+
+    parser = OptionParser(
+        usage=textwrap.dedent('''\
             %prog [options] input_font_file output_font_file characters_to_keep
 
             Subset the specified font, keeping only the glyphs for the characters in
@@ -206,41 +244,48 @@ def option_parser():
             the form: a,b,c,A-Z,0-9,xyz
 
             You can specify ranges in the list of characters, as shown above.
-            '''))
-    parser.add_option('-c', '--codes', default=False, action='store_true',
-            help='If specified, the list of characters is interpreted as '
-            'numeric unicode codes instead of characters. So to specify the '
-            'characters a,b you would use 97,98 or U+0061,U+0062')
+            ''')
+    )
+    parser.add_option(
+        '-c',
+        '--codes',
+        default=False,
+        action='store_true',
+        help='If specified, the list of characters is interpreted as '
+        'numeric unicode codes instead of characters. So to specify the '
+        'characters a,b you would use 97,98 or U+0061,U+0062',
+    )
     parser.prog = 'subset-font'
     return parser
 
 
 def print_stats(old_stats, new_stats):
     from calibre import prints
+
     prints('========= Table comparison (original vs. subset) =========')
-    prints('Table', ' ', '%10s'%'Size', '  ', 'Percent', '   ', '%10s'%'New Size',
-            ' New Percent')
-    prints('='*80)
-    old_total = sum(itervalues(old_stats))
-    new_total = sum(itervalues(new_stats))
-    tables = sorted(old_stats, key=lambda x:old_stats[x],
-            reverse=True)
+    prints('Table', ' ', f"{'Size':>10}", '  ', 'Percent', '   ', f"{'New Size':>10}", ' New Percent')
+    prints('=' * 80)
+    old_total = sum(old_stats.values())
+    new_total = sum(new_stats.values())
+    tables = sorted(old_stats, key=lambda x: old_stats[x], reverse=True)
     for table in tables:
         osz = old_stats[table]
-        op = osz/old_total * 100
+        op = osz / old_total * 100
         nsz = new_stats.get(table, 0)
-        np = nsz/new_total * 100
+        np = nsz / new_total * 100
         suffix = ' | same size'
         if nsz != osz:
-            suffix = ' | reduced to %.1f %%'%(nsz/osz * 100)
-        prints('%4s'%table, '  ', '%10s'%osz, '  ', '%5.1f %%'%op, '   ',
-                '%10s'%nsz, '  ', '%5.1f %%'%np, suffix)
-    prints('='*80)
+            suffix = f' | reduced to {nsz / osz * 100:.1f} %'
+        prints(f'{table:>4}', '  ', f'{osz:>10}', '  ', f'{op:5.1f} %', '   ', f'{nsz:>10}', '  ', f'{np:5.1f} %', suffix)
+    prints('=' * 80)
 
 
 def main(args):
-    import sys, time
+    import sys
+    import time
+
     from calibre import prints
+
     parser = option_parser()
     opts, args = parser.parse_args(args)
     if len(args) < 4 or len(args) > 4:
@@ -250,7 +295,7 @@ def main(args):
     with open(iff, 'rb') as f:
         orig = f.read()
 
-    chars = [x for x in chars.split(',')]
+    chars = chars.split(',')
     individual, ranges = set(), set()
 
     def not_single(c):
@@ -282,13 +327,14 @@ def main(args):
     st = time.time()
     sf, old_stats, new_stats = subset(orig, individual, ranges)
     taken = time.time() - st
-    reduced = (len(sf)/len(orig)) * 100
+    reduced = (len(sf) / len(orig)) * 100
 
     def sz(x):
-        return '%gKB'%(len(x)/1024.)
+        return f'{len(x) / 1024.0:g}KB'
+
     print_stats(old_stats, new_stats)
-    prints('Original size:', sz(orig), 'Subset size:', sz(sf), 'Reduced to: %g%%'%(reduced))
-    prints('Subsetting took %g seconds'%taken)
+    prints('Original size:', sz(orig), 'Subset size:', sz(sf), f'Reduced to: {reduced:g}%')
+    prints(f'Subsetting took {taken:g} seconds')
     with open(off, 'wb') as f:
         f.write(sf)
     prints('Subset font written to:', off)
@@ -296,11 +342,11 @@ def main(args):
 
 if __name__ == '__main__':
     try:
-        import init_calibre
-        init_calibre
+        import init_calibre  # ruff: ignore[unused-import]  # type: ignore
     except ImportError:
         pass
     import sys
+
     main(sys.argv)
 # }}}
 
@@ -308,8 +354,10 @@ if __name__ == '__main__':
 
 
 def test_mem():
-    from calibre.utils.mem import memory
     import gc
+
+    from calibre.utils.mem import memory
+
     gc.collect()
     start_mem = memory()
     raw = P('fonts/liberation/LiberationSerif-Regular.ttf', data=True)
@@ -319,7 +367,7 @@ def test_mem():
     del raw
     for i in range(3):
         gc.collect()
-    print('Leaked memory per call:', (memory() - start_mem)/calls*1024, 'KB')
+    print('Leaked memory per call:', (memory() - start_mem) / calls * 1024, 'KB')
 
 
 def test():
@@ -331,6 +379,7 @@ def test():
 
 def all():
     from calibre.utils.fonts.scanner import font_scanner
+
     failed = []
     unsupported = []
     warnings = {}
@@ -343,10 +392,9 @@ def all():
             total += 1
             try:
                 w = []
-                sf, old_stats, new_stats = subset(raw, {'a', 'b', 'c'},
-                        (), w)
+                sf, old_stats, new_stats = subset(raw, {'a', 'b', 'c'}, (), w)
                 if w:
-                    warnings[font['full_name'] + ' (%s)'%font['path']] = w
+                    warnings[font['full_name'] + ' ({})'.format(font['path'])] = w
             except NoGlyphs:
                 print('No glyphs!')
                 continue
@@ -358,8 +406,8 @@ def all():
                 print('Failed!')
                 failed.append((font['full_name'], font['path'], str(e)))
             else:
-                averages.append(sum(itervalues(new_stats))/sum(itervalues(old_stats)) * 100)
-                print('Reduced to:', '%.1f'%averages[-1] , '%')
+                averages.append(sum(new_stats.values()) / sum(old_stats.values()) * 100)
+                print('Reduced to:', f'{averages[-1]:.1f}', '%')
     if unsupported:
         print('\n\nUnsupported:')
         for name, path, err in unsupported:
@@ -367,7 +415,7 @@ def all():
             print()
     if warnings:
         print('\n\nWarnings:')
-    for name, w in iteritems(warnings):
+    for name, w in warnings.items():
         if w:
             print(name)
             print('', '\n\t'.join(w), sep='\t')
@@ -377,9 +425,8 @@ def all():
             print(name, path, err)
             print()
 
-    print('Average reduction to: %.1f%%'%(sum(averages)/len(averages)))
-    print('Total:', total, 'Unsupported:', len(unsupported), 'Failed:',
-            len(failed), 'Warnings:', len(warnings))
+    print(f'Average reduction to: {sum(averages) / len(averages):.1f}%')
+    print('Total:', total, 'Unsupported:', len(unsupported), 'Failed:', len(failed), 'Warnings:', len(warnings))
 
 
 # }}}

@@ -1,18 +1,19 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
+import ctypes
+import ctypes.wintypes as types
+import datetime
+import numbers
+import struct
 
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import ctypes, ctypes.wintypes as types, struct, datetime, numbers
-
+from calibre.utils.date import utc_tz
 from calibre_extensions import winutil
 
 try:
     import winreg
 except ImportError:
-    import _winreg as winreg
-
+    import _winreg as winreg  # type: ignore
 
 # Binding to C library {{{
 advapi32 = ctypes.windll.advapi32
@@ -28,18 +29,18 @@ LPCWSTR = types.LPCWSTR
 LPWSTR = types.LPWSTR
 LPCVOID = types.LPCVOID
 
-HKEY_CURRENT_USER  = HKCU = HKEY(ULONG(winreg.HKEY_CURRENT_USER).value)
-HKEY_CLASSES_ROOT  = HKCR = HKEY(ULONG(winreg.HKEY_CLASSES_ROOT).value)
+HKEY_CURRENT_USER = HKCU = HKEY(ULONG(winreg.HKEY_CURRENT_USER).value)
+HKEY_CLASSES_ROOT = HKCR = HKEY(ULONG(winreg.HKEY_CLASSES_ROOT).value)
 HKEY_LOCAL_MACHINE = HKLM = HKEY(ULONG(winreg.HKEY_LOCAL_MACHINE).value)
 KEY_READ = winreg.KEY_READ
 KEY_ALL_ACCESS = winreg.KEY_ALL_ACCESS
-RRF_RT_ANY = 0x0000ffff
+RRF_RT_ANY = 0x0000FFFF
 RRF_NOEXPAND = 0x10000000
 RRF_ZEROONFAILURE = 0x20000000
 
 
 class FILETIME(ctypes.Structure):
-    _fields_ = [("dwLowDateTime", DWORD), ("dwHighDateTime", DWORD)]
+    _fields_ = [('dwLowDateTime', DWORD), ('dwHighDateTime', DWORD)]
 
 
 def default_errcheck(result, func, args):
@@ -52,7 +53,6 @@ null = object()
 
 
 class a:
-
     def __init__(self, name, typ, default=null, in_arg=True):
         self.typ = typ
         if default is null:
@@ -70,10 +70,27 @@ def cwrap(name, restype, *args, **kw):
 
 
 RegOpenKey = cwrap(
-    'RegOpenKeyExW', LONG, a('key', HKEY), a('sub_key', LPCWSTR), a('options', DWORD, 0), a('access', ULONG, KEY_READ), a('result', PHKEY, in_arg=False))
+    'RegOpenKeyExW',
+    LONG,
+    a('key', HKEY),
+    a('sub_key', LPCWSTR),
+    a('options', DWORD, 0),
+    a('access', ULONG, KEY_READ),
+    a('result', PHKEY, in_arg=False),
+)
 RegCreateKey = cwrap(
-    'RegCreateKeyExW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, ''), a('reserved', DWORD, 0), a('cls', LPWSTR, None), a('options', DWORD, 0),
-    a('access', ULONG, KEY_ALL_ACCESS), a('security', ctypes.c_void_p, 0), a('result', PHKEY, in_arg=False), a('disposition', LPDWORD, in_arg=False))
+    'RegCreateKeyExW',
+    LONG,
+    a('key', HKEY),
+    a('sub_key', LPCWSTR, ''),
+    a('reserved', DWORD, 0),
+    a('cls', LPWSTR, None),
+    a('options', DWORD, 0),
+    a('access', ULONG, KEY_ALL_ACCESS),
+    a('security', ctypes.c_void_p, 0),
+    a('result', PHKEY, in_arg=False),
+    a('disposition', LPDWORD, in_arg=False),
+)
 RegCloseKey = cwrap('RegCloseKey', LONG, a('key', HKEY))
 
 
@@ -88,8 +105,18 @@ def enum_value_errcheck(result, func, args):
 
 
 RegEnumValue = cwrap(
-    'RegEnumValueW', LONG, a('key', HKEY), a('index', DWORD), a('value_name', LPWSTR), a('value_name_size', LPDWORD), a('reserved', LPDWORD),
-    a('value_type', LPDWORD), a('data', LPBYTE), a('data_size', LPDWORD), errcheck=enum_value_errcheck)
+    'RegEnumValueW',
+    LONG,
+    a('key', HKEY),
+    a('index', DWORD),
+    a('value_name', LPWSTR),
+    a('value_name_size', LPDWORD),
+    a('reserved', LPDWORD),
+    a('value_type', LPDWORD),
+    a('data', LPBYTE),
+    a('data_size', LPDWORD),
+    errcheck=enum_value_errcheck,
+)
 
 
 def last_error_errcheck(result, func, args):
@@ -99,7 +126,14 @@ def last_error_errcheck(result, func, args):
 
 
 ExpandEnvironmentStrings = cwrap(
-    'ExpandEnvironmentStringsW', DWORD, a('src', LPCWSTR), a('dest', LPWSTR), a('size', DWORD), errcheck=last_error_errcheck, lib=ctypes.windll.kernel32)
+    'ExpandEnvironmentStringsW',
+    DWORD,
+    a('src', LPCWSTR),
+    a('dest', LPWSTR),
+    a('size', DWORD),
+    errcheck=last_error_errcheck,
+    lib=ctypes.windll.kernel32,
+)
 
 
 def expand_environment_strings(src):
@@ -121,13 +155,13 @@ def convert_to_registry_data(value, has_expansions=False):
         try:
             raw, dtype = struct.pack('L', value), winreg.REG_DWORD
         except struct.error:
-            raw = struct.pack('Q', value), winutil.REG_QWORD
+            raw, dtype = struct.pack('Q', value), winutil.REG_QWORD
         buf = ctypes.create_string_buffer(raw)
         return buf, dtype, len(buf)
     if isinstance(value, bytes):
         buf = ctypes.create_string_buffer(value)
         return buf, winreg.REG_BINARY, len(buf)
-    raise ValueError('Unknown data type: %r' % value)
+    raise ValueError(f'Unknown data type: {value!r}')
 
 
 def convert_registry_data(raw, size, dtype):
@@ -150,16 +184,25 @@ def convert_registry_data(raw, size, dtype):
         if size == 0:
             return 0
         return ctypes.cast(raw, ctypes.POINTER(ctypes.c_uint64)).contents.value
-    raise ValueError('Unsupported data type: %r' % dtype)
+    raise ValueError(f'Unsupported data type: {dtype!r}')
 
 
 try:
     RegSetKeyValue = cwrap(
-        'RegSetKeyValueW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, None), a('name', LPCWSTR, None),
-        a('dtype', DWORD, winreg.REG_SZ), a('data', LPCVOID, None), a('size', DWORD))
+        'RegSetKeyValueW',
+        LONG,
+        a('key', HKEY),
+        a('sub_key', LPCWSTR, None),
+        a('name', LPCWSTR, None),
+        a('dtype', DWORD, winreg.REG_SZ),
+        a('data', LPCVOID, None),
+        a('size', DWORD),
+    )
 except Exception:
-    raise RuntimeError('calibre requires Windows Vista or newer to run, the last version of calibre'
-                       ' that could run on Windows XP is version 1.48, available from: http://download.calibre-ebook.com/')
+    raise RuntimeError(
+        'calibre requires Windows Vista or newer to run, the last version of calibre'
+        ' that could run on Windows XP is version 1.48, available from: http://download.calibre-ebook.com/'
+    )
 
 
 def delete_value_errcheck(result, func, args):
@@ -171,13 +214,27 @@ def delete_value_errcheck(result, func, args):
 
 
 RegDeleteKeyValue = cwrap(
-    'RegDeleteKeyValueW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, None), a('name', LPCWSTR, None), errcheck=delete_value_errcheck)
-RegDeleteTree = cwrap(
-    'RegDeleteTreeW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, None), errcheck=delete_value_errcheck)
+    'RegDeleteKeyValueW',
+    LONG,
+    a('key', HKEY),
+    a('sub_key', LPCWSTR, None),
+    a('name', LPCWSTR, None),
+    errcheck=delete_value_errcheck,
+)
+RegDeleteTree = cwrap('RegDeleteTreeW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, None), errcheck=delete_value_errcheck)
 RegEnumKeyEx = cwrap(
-    'RegEnumKeyExW', LONG, a('key', HKEY), a('index', DWORD), a('name', LPWSTR), a('name_size', LPDWORD), a('reserved', LPDWORD, None),
-    a('cls', LPWSTR, None), a('cls_size', LPDWORD, None), a('last_write_time', ctypes.POINTER(FILETIME), in_arg=False),
-    errcheck=enum_value_errcheck)
+    'RegEnumKeyExW',
+    LONG,
+    a('key', HKEY),
+    a('index', DWORD),
+    a('name', LPWSTR),
+    a('name_size', LPDWORD),
+    a('reserved', LPDWORD, None),
+    a('cls', LPWSTR, None),
+    a('cls_size', LPDWORD, None),
+    a('last_write_time', ctypes.POINTER(FILETIME), in_arg=False),
+    errcheck=enum_value_errcheck,
+)
 
 
 def get_value_errcheck(result, func, args):
@@ -191,12 +248,28 @@ def get_value_errcheck(result, func, args):
 
 
 RegGetValue = cwrap(
-    'RegGetValueW', LONG, a('key', HKEY), a('sub_key', LPCWSTR, None), a('value_name', LPCWSTR, None), a('flags', DWORD, RRF_RT_ANY),
-    a('data_type', LPDWORD, 0), a('data', ctypes.c_void_p, 0), a('size', LPDWORD, 0), errcheck=get_value_errcheck
+    'RegGetValueW',
+    LONG,
+    a('key', HKEY),
+    a('sub_key', LPCWSTR, None),
+    a('value_name', LPCWSTR, None),
+    a('flags', DWORD, RRF_RT_ANY),
+    a('data_type', LPDWORD, 0),
+    a('data', ctypes.c_void_p, 0),
+    a('size', LPDWORD, 0),
+    errcheck=get_value_errcheck,
 )
 RegLoadMUIString = cwrap(
-    'RegLoadMUIStringW', LONG, a('key', HKEY), a('value_name', LPCWSTR, None), a('data', LPWSTR, None), a('buf_size', DWORD, 0),
-    a('size', LPDWORD, 0), a('flags', DWORD, 0), a('directory', LPCWSTR, None), errcheck=get_value_errcheck
+    'RegLoadMUIStringW',
+    LONG,
+    a('key', HKEY),
+    a('value_name', LPCWSTR, None),
+    a('data', LPWSTR, None),
+    a('buf_size', DWORD, 0),
+    a('size', LPDWORD, 0),
+    a('flags', DWORD, 0),
+    a('directory', LPCWSTR, None),
+    errcheck=get_value_errcheck,
 )
 
 
@@ -204,13 +277,13 @@ def filetime_to_datettime(ft):
     timestamp = ft.dwHighDateTime
     timestamp <<= 32
     timestamp |= ft.dwLowDateTime
-    return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(microseconds=timestamp/10)
+    return datetime.datetime(1601, 1, 1, 0, 0, 0, tzinfo=utc_tz) + datetime.timedelta(microseconds=timestamp / 10)
+
 
 # }}}
 
 
 class Key:
-
     def __init__(self, create_at=None, open_at=None, root=HKEY_CURRENT_USER, open_mode=KEY_READ):
         root = getattr(root, 'hkey', root)
         self.was_created = False
@@ -228,8 +301,15 @@ class Key:
         while True:
             len_data_buf.value = len(data_buf)
             try:
-                RegGetValue(self.hkey, sub_key, value_name, RRF_RT_ANY | RRF_NOEXPAND | RRF_ZEROONFAILURE,
-                            ctypes.byref(data_type), data_buf, len_data_buf)
+                RegGetValue(
+                    self.hkey,
+                    sub_key,
+                    value_name,
+                    RRF_RT_ANY | RRF_NOEXPAND | RRF_ZEROONFAILURE,
+                    ctypes.byref(data_type),
+                    data_buf,
+                    len_data_buf,
+                )
                 break
             except ValueError:
                 data_buf = ctypes.create_string_buffer(2 * len(data_buf))
@@ -257,7 +337,7 @@ class Key:
         return data_buf.value
 
     def iterkeynames(self, get_last_write_times=False):
-        ' Iterate over the names of all keys in this key '
+        "Iterate over the names of all keys in this key"
         name_buf = ctypes.create_unicode_buffer(1024)
         lname_buf = DWORD(len(name_buf))
         i = 0
@@ -270,26 +350,26 @@ class Key:
             except StopIteration:
                 break
             if get_last_write_times:
-                yield name_buf.value[:lname_buf.value], filetime_to_datettime(file_time)
+                yield name_buf.value[: lname_buf.value], filetime_to_datettime(file_time)
             else:
-                yield name_buf.value[:lname_buf.value]
+                yield name_buf.value[: lname_buf.value]
             i += 1
 
     def delete_value(self, name=None, sub_key=None):
-        ' Delete the named value from this key. If name is None the default value is deleted. If name does not exist, not error is reported. '
+        "Delete the named value from this key. If name is None the default value is deleted. If name does not exist, not error is reported."
         RegDeleteKeyValue(self.hkey, sub_key, name)
 
     def delete_tree(self, sub_key=None):
-        ''' Delete this all children of this key. Note that a key is not
+        """Delete this all children of this key. Note that a key is not
         actually deleted till the last handle to it is closed. Also if you
         specify a sub_key, then the sub-key is deleted completely. If sub_key
-        does not exist, no error is reported.'''
+        does not exist, no error is reported."""
         RegDeleteTree(self.hkey, sub_key)
 
     def set(self, name=None, value=None, sub_key=None, has_expansions=False):
-        ''' Set a value for this key (with optional sub-key). If name is None,
+        """Set a value for this key (with optional sub-key). If name is None,
         the Default value is set. value can be an integer, a string, bytes or a list
-        of strings. If you want to use expansions, set has_expansions=True. '''
+        of strings. If you want to use expansions, set has_expansions=True."""
         value, dtype, size = convert_to_registry_data(value, has_expansions=has_expansions)
         RegSetKeyValue(self.hkey, sub_key, name, dtype, value, size)
 
@@ -297,15 +377,15 @@ class Key:
         self.set(sub_key=sub_key, value=value, has_expansions=has_expansions)
 
     def sub_key(self, path, allow_create=True, open_mode=KEY_READ):
-        ' Create (or open) a sub-key at the specified relative path. When opening instead of creating, use open_mode '
+        "Create (or open) a sub-key at the specified relative path. When opening instead of creating, use open_mode"
         if allow_create:
             return Key(create_at=path, root=self.hkey)
         return Key(open_at=path, root=self.hkey)
 
     def itervalues(self, get_data=False, sub_key=None):
-        '''Iterate over all values in this key (or optionally the specified
+        """Iterate over all values in this key (or optionally the specified
         sub-key. If get_data is True also return the data for every value,
-        otherwise, just the name.'''
+        otherwise, just the name."""
         key = self.hkey
         if sub_key is not None:
             try:
@@ -326,26 +406,34 @@ class Key:
                     ldata_buf.value = len(data_buf)
                     try:
                         RegEnumValue(
-                            key, i, name_buf, ctypes.byref(lname_buf), None, ctypes.byref(vtype), data_buf, ctypes.byref(ldata_buf))
+                            key,
+                            i,
+                            name_buf,
+                            ctypes.byref(lname_buf),
+                            None,
+                            ctypes.byref(vtype),
+                            data_buf,
+                            ctypes.byref(ldata_buf),
+                        )
                     except ValueError:
                         data_buf = (BYTE * ldata_buf.value)()
                         continue
                     except StopIteration:
                         break
                     data = convert_registry_data(data_buf, ldata_buf.value, vtype.value)
-                    yield name_buf.value[:lname_buf.value], data
+                    yield name_buf.value[: lname_buf.value], data
                 else:
                     try:
-                        RegEnumValue(
-                            key, i, name_buf, ctypes.byref(lname_buf), None, None, None, None)
+                        RegEnumValue(key, i, name_buf, ctypes.byref(lname_buf), None, None, None, None)
                     except StopIteration:
                         break
-                    yield name_buf.value[:lname_buf.value]
+                    yield name_buf.value[: lname_buf.value]
 
                 i += 1
         finally:
             if sub_key is not None:
                 RegCloseKey(key)
+
     values = itervalues
 
     def __enter__(self):
@@ -371,6 +459,7 @@ class Key:
 
 if __name__ == '__main__':
     from pprint import pprint
+
     k = Key(open_at=r'Software\RegisteredApplications', root=HKLM)
     pprint(tuple(k.values(get_data=True)))
     k = Key(r'Software\calibre\winregtest')

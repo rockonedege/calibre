@@ -10,10 +10,12 @@
 #                                                                       #
 #                                                                       #
 #########################################################################
-import sys, os
+import os
+import sys
 
 from calibre.ebooks.rtf2xml import copy
 from calibre.ptempfile import better_mktemp
+
 from . import open_for_read, open_for_write
 
 
@@ -25,12 +27,13 @@ class Header:
     the proper places in the body.
     """
 
-    def __init__(self,
-            in_file ,
-            bug_handler,
-            copy=None,
-            run_level=1,
-            ):
+    def __init__(
+        self,
+        in_file,
+        bug_handler,
+        copy=None,
+        run_level=1,
+    ):
         self.__file = in_file
         self.__bug_handler = bug_handler
         self.__copy = copy
@@ -44,10 +47,7 @@ class Header:
         if self.__cb_count == self.__header_bracket_count:
             self.__in_header = False
             self.__write_obj.write(line)
-            self.__write_to_head_obj.write(
-            'mi<mk<head___clo\n'
-            'mi<tg<close_____<header-or-footer\n'
-            'mi<mk<header-clo\n')
+            self.__write_to_head_obj.write('mi<mk<head___clo\nmi<tg<close_____<header-or-footer\nmi<mk<header-clo\n')
         else:
             self.__write_to_head_obj.write(line)
 
@@ -62,25 +62,15 @@ class Header:
         # temporarily set this to zero so I can enter loop
         self.__cb_count = 0
         self.__header_bracket_count = self.__ob_count
-        self.__write_obj.write(
-        'mi<mk<header-ind<%04d\n' % self.__header_count)
-        self.__write_to_head_obj.write(
-        'mi<mk<header-ope<%04d\n' % self.__header_count)
+        self.__write_obj.write(f'mi<mk<header-ind<{self.__header_count:04}\n')
+        self.__write_to_head_obj.write(f'mi<mk<header-ope<{self.__header_count:04}\n')
         info = line[6:16]
         type = self.__head_dict.get(info)
         if type:
-            self.__write_to_head_obj.write(
-                    'mi<tg<open-att__<header-or-footer<type>%s\n' % (type)
-                    )
+            self.__write_to_head_obj.write(f'mi<tg<open-att__<header-or-footer<type>{type}\n')
         else:
-            sys.stderr.write(
-            'module is header\n'
-            'method is __found_header\n'
-            'no dict entry\n'
-            'line is %s' % line)
-            self.__write_to_head_obj.write(
-                    'mi<tg<open-att__<header-or-footer<type>none\n'
-                    )
+            sys.stderr.write(f'module is header\nmethod is __found_header\nno dict entry\nline is {line}')
+            self.__write_to_head_obj.write('mi<tg<open-att__<header-or-footer<type>none\n')
 
     def __default_sep(self, line):
         """
@@ -94,21 +84,21 @@ class Header:
         """
         initiate counters for separate_footnotes method.
         """
-        self.__bracket_count=0
+        self.__bracket_count = 0
         self.__ob_count = 0
         self.__cb_count = 0
         self.__header_bracket_count = 0
         self.__in_header = False
         self.__header_count = 0
         self.__head_dict = {
-            'head-left_'        :   ('header-left'),
-            'head-right'        :   ('header-right'),
-            'foot-left_'        :   ('footer-left'),
-            'foot-right'        :   ('footer-right'),
-            'head-first'        :   ('header-first'),
-            'foot-first'        :   ('footer-first'),
-            'header____'        :   ('header'),
-            'footer____'        :   ('footer'),
+            'head-left_': ('header-left'),
+            'head-right': ('header-right'),
+            'foot-left_': ('footer-left'),
+            'foot-right': ('footer-right'),
+            'head-first': ('header-first'),
+            'foot-first': ('footer-first'),
+            'header____': ('header'),
+            'footer____': ('footer'),
         }
 
     def separate_headers(self):
@@ -140,17 +130,15 @@ class Header:
 
         with open_for_read(self.__header_holder) as read_obj:
             with open_for_write(self.__write_to, append=True) as write_obj:
-                write_obj.write(
-                'mi<mk<header-beg\n')
+                write_obj.write('mi<mk<header-beg\n')
                 for line in read_obj:
                     write_obj.write(line)
-                write_obj.write(
-                'mi<mk<header-end\n')
+                write_obj.write('mi<mk<header-end\n')
         os.remove(self.__header_holder)
 
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "header_separate.data")
+            copy_obj.copy_file(self.__write_to, 'header_separate.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)
 
@@ -213,9 +201,8 @@ class Header:
                 if line == 'mi<mk<header-clo\n':
                     return string_to_return
                 string_to_return += line
-            else:
-                if line == look_for:
-                    found_head = True
+            elif line == look_for:
+                found_head = True
 
     def __join_from_temp(self):
         """
@@ -254,7 +241,7 @@ class Header:
         self.__read_from_head_obj.close()
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "header_join.data")
+            copy_obj.copy_file(self.__write_to, 'header_join.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)
         os.remove(self.__header_holder)

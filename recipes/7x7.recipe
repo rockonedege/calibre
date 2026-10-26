@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # vim:fileencoding=utf-8
 
-from __future__ import unicode_literals, division, absolute_import, print_function
+from __future__ import absolute_import, division, print_function, unicode_literals
+
 from calibre.web.feeds.news import BasicNewsRecipe
 
 
@@ -11,7 +12,7 @@ class News(BasicNewsRecipe):
     description = '7x7 - межрегиональный интернет-журнал'
     publisher = '7x7-journal.ru'
     category = 'news'
-    cover_url = u'https://semnasem.org/site-specific/7x7-journal.ru/images/frontend/logo/logo-header.svg'
+    cover_url = 'https://semnasem.org/site-specific/7x7-journal.ru/images/frontend/logo/logo-header.svg'
     language = 'ru'
     no_stylesheets = True
     remove_javascript = True
@@ -28,7 +29,4 @@ class News(BasicNewsRecipe):
 
     remove_tags_after = dict(name='div', attrs={'class': 'article__footer-wrap'})
 
-    remove_tags = [
-        dict(name='div', attrs={'class': 'article__footer-wrap'}),
-        dict(name='div', attrs={'class': 'promolink-widget'})
-    ]
+    remove_tags = [dict(name='div', attrs={'class': 'article__footer-wrap'}), dict(name='div', attrs={'class': 'promolink-widget'})]

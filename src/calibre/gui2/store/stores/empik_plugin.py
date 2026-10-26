@@ -1,20 +1,13 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011-2023, Tomasz Długosz <tomek3d@gmail.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-store_version = 9  # Needed for dynamic plugin loading
-
-__license__ = 'GPL 3'
-__copyright__ = '2011-2019, Tomasz Długosz <tomek3d@gmail.com>'
-__docformat__ = 'restructuredtext en'
+store_version = 11  # Needed for dynamic plugin loading
 
 from base64 import b64encode
 from contextlib import closing
-try:
-    from urllib.parse import quote
-except ImportError:
-    from urllib import quote
-
-from lxml import html
+from urllib.parse import quote
 
 from qt.core import QUrl
 
@@ -24,6 +17,11 @@ from calibre.gui2.store import StorePlugin
 from calibre.gui2.store.basic_config import BasicStoreConfig
 from calibre.gui2.store.search_result import SearchResult
 from calibre.gui2.store.web_store_dialog import WebStoreDialog
+
+try:
+    from calibre.utils.xml_parse import safe_html_fromstring
+except ImportError:
+    from lxml.html import fromstring as safe_html_fromstring
 
 
 def as_base64(data):
@@ -36,8 +34,7 @@ def as_base64(data):
 
 
 class EmpikStore(BasicStoreConfig, StorePlugin):
-
-    def open(self, parent=None, detail_item=None, external=False):
+    def open(self, gui=None, parent=None, detail_item=None, external=False):
         aff_root = 'https://www.a4b-tracking.com/pl/stat-click-text-link/78/58/'
 
         url = 'https://www.empik.com/ebooki'
@@ -49,9 +46,9 @@ class EmpikStore(BasicStoreConfig, StorePlugin):
             detail_url = aff_root + as_base64(detail_item)
 
         if external or self.config.get('open_external', False):
-            open_url(QUrl(url_slash_cleaner(detail_url if detail_url else aff_url)))
+            open_url(QUrl(url_slash_cleaner(detail_url or aff_url)))
         else:
-            d = WebStoreDialog(self.gui, url, parent, detail_url if detail_url else aff_url)
+            d = WebStoreDialog(self.gui, url, parent, detail_url or aff_url)
             d.setWindowTitle(self.name)
             d.set_tags(self.config.get('tags', ''))
             d.exec()
@@ -63,24 +60,24 @@ class EmpikStore(BasicStoreConfig, StorePlugin):
 
         counter = max_results
         with closing(br.open(url, timeout=timeout)) as f:
-            doc = html.fromstring(f.read())
+            doc = safe_html_fromstring(f.read())
             for data in doc.xpath('//div[@class="search-content js-search-content"]/div'):
                 if counter <= 0:
                     break
 
-                id = ''.join(data.xpath('.//div[@class="name"]/a/@href'))
+                id = ''.join(data.xpath('.//a[@class="img seoImage"]/@href'))
                 if not id:
                     continue
 
+                title = ''.join(data.xpath('.//h2[@class="product-title"]/a/strong/text()'))
+                author = ', '.join(data.xpath('.//a[@class="smartAuthor "]/text()'))
                 cover_url = ''.join(data.xpath('.//a/img[@class="lazy"]/@lazy-img'))
-                author = ', '.join(data.xpath('.//a[@class="smartAuthor"]/text()'))
-                title = ''.join(data.xpath('.//div[@class="name"]/a/@title'))
                 price = ''.join(data.xpath('.//div[@class="price ta-price-tile "]/text()'))
 
                 # with closing(br.open('https://empik.com' + id.strip(), timeout=timeout/4)) as nf:
-                #    idata = html.fromstring(nf.read())
-                #    crawled = idata.xpath('.//a[(@class="chosen hrefstyle") or (@class="connectionsLink hrefstyle")]/text()')
-                #    formats = ','.join([re.sub('ebook, ','', x.strip()) for x in crawled if 'ebook' in x])
+                #     idata = html.fromstring(nf.read())
+                #     crawled = idata.xpath('.//a[(@class="chosen hrefstyle") or (@class="connectionsLink hrefstyle")]/text()')
+                #     formats = ','.join([re.sub(r'ebook, ','', x.strip()) for x in crawled if 'ebook' in x])
 
                 counter -= 1
 

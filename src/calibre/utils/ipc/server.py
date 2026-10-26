@@ -1,10 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid@kovidgoyal.net>
 
 import os
 import sys
@@ -14,9 +9,11 @@ from collections import deque
 from itertools import count
 from math import ceil
 from multiprocessing import Pipe
+from queue import Empty, Queue
 from threading import Thread
 
-from calibre import detect_ncpus as cpu_count, force_unicode
+from calibre import detect_ncpus as cpu_count
+from calibre import force_unicode
 from calibre.constants import DEBUG
 from calibre.ptempfile import base_dir
 from calibre.utils.ipc import eintr_retry_call
@@ -24,16 +21,13 @@ from calibre.utils.ipc.launch import Worker
 from calibre.utils.ipc.worker import PARALLEL_FUNCS
 from calibre.utils.serialize import pickle_loads
 from polyglot.binary import as_hex_unicode
-from polyglot.builtins import environ_item, string_or_bytes
-from polyglot.queue import Empty, Queue
-
+from polyglot.builtins import environ_item
 
 server_counter = count()
 _name_counter = count()
 
 
 class ConnectedWorker(Thread):
-
     def __init__(self, worker, conn, rfile):
         Thread.__init__(self)
         self.daemon = True
@@ -96,11 +90,8 @@ class CriticalError(Exception):
 
 
 class Server(Thread):
-
-    def __init__(self, notify_on_job_done=lambda x: x, pool_size=None,
-            limit=sys.maxsize, enforce_cpu_limit=True):
-        Thread.__init__(self)
-        self.daemon = True
+    def __init__(self, notify_on_job_done=lambda x: x, pool_size=None, limit=sys.maxsize, enforce_cpu_limit=True):
+        Thread.__init__(self, name='IPCServer', daemon=True)
         self.id = next(server_counter) + 1
 
         if enforce_cpu_limit:
@@ -118,15 +109,14 @@ class Server(Thread):
     def launch_worker(self, gui=False, redirect_output=None, job_name=None):
         start = time.monotonic()
         id = next(self.launched_worker_counter)
-        fd, rfile = tempfile.mkstemp(prefix='ipc_result_%d_%d_'%(self.id, id),
-                dir=base_dir(), suffix='.pickle')
+        fd, rfile = tempfile.mkstemp(prefix=f'ipc_result_{self.id}_{id}_', dir=base_dir(), suffix='.pickle')
         os.close(fd)
         if redirect_output is None:
             redirect_output = not gui
 
         cw = self.do_launch(gui, redirect_output, rfile, job_name=job_name)
-        if isinstance(cw, string_or_bytes):
-            raise CriticalError('Failed to launch worker process:\n'+force_unicode(cw))
+        if isinstance(cw, (str, bytes)):
+            raise CriticalError('Failed to launch worker process:\n' + force_unicode(cw))
         if DEBUG:
             print(f'Worker Launch took: {time.monotonic() - start:.2f} seconds')
         return cw
@@ -134,10 +124,7 @@ class Server(Thread):
     def do_launch(self, gui, redirect_output, rfile, job_name=None):
         a, b = Pipe()
         with a:
-            env = {
-                'CALIBRE_WORKER_FD': str(a.fileno()),
-                'CALIBRE_WORKER_RESULT' : environ_item(as_hex_unicode(rfile))
-            }
+            env = {'CALIBRE_WORKER_FD': str(a.fileno()), 'CALIBRE_WORKER_RESULT': environ_item(as_hex_unicode(rfile))}
             w = Worker(env, gui=gui, job_name=job_name)
 
             try:
@@ -145,10 +132,11 @@ class Server(Thread):
             except BaseException:
                 try:
                     w.kill()
-                except:
+                except Exception:
                     pass
                 b.close()
                 import traceback
+
                 return traceback.format_exc()
         return ConnectedWorker(w, b, rfile)
 
@@ -184,19 +172,19 @@ class Server(Thread):
             for worker in [w for w in self.workers if not w.is_alive]:
                 try:
                     worker.close_log_file()
-                except:
+                except Exception:
                     pass
                 self.workers.remove(worker)
                 job = worker.job
                 if worker.returncode != 0:
-                    job.failed   = True
+                    job.failed = True
                     job.returncode = worker.returncode
                 elif os.path.exists(worker.rfile):
                     try:
-                        with lopen(worker.rfile, 'rb') as f:
+                        with open(worker.rfile, 'rb') as f:
                             job.result = pickle_loads(f.read())
                         os.remove(worker.rfile)
-                    except:
+                    except Exception:
                         pass
                 job.duration = time.time() - job.start_time
                 self.changed_jobs_queue.put(job)
@@ -261,17 +249,17 @@ class Server(Thread):
                 break
 
     def split(self, tasks):
-        '''
+        """
         Split a list into a list of sub lists, with the number of sub lists being
         no more than the number of workers this server supports. Each sublist contains
         2-tuples of the form (i, x) where x is an element from the original list
         and i is the index of the element x in the original list.
-        '''
+        """
         ans, count, pos = [], 0, 0
-        delta = int(ceil(len(tasks)/float(self.pool_size)))
+        delta = ceil(len(tasks) / float(self.pool_size))
         while count < len(tasks):
             section = []
-            for t in tasks[pos:pos+delta]:
+            for t in tasks[pos : pos + delta]:
                 section.append((count, t))
                 count += 1
             ans.append(section)
@@ -281,17 +269,17 @@ class Server(Thread):
     def close(self):
         try:
             self.add_jobs_queue.put(None)
-        except:
+        except Exception:
             pass
         try:
-            self.listener.close()
-        except:
+            getattr(self, 'listener').close()
+        except Exception:
             pass
         time.sleep(0.2)
         for worker in list(self.workers):
             try:
                 worker.kill()
-            except:
+            except Exception:
                 pass
 
     def __enter__(self):

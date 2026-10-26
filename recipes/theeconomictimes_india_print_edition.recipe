@@ -1,8 +1,9 @@
-'''
+"""
 economictimes.indiatimes.com
-'''
+"""
 
 import re
+
 from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
@@ -19,30 +20,48 @@ class TheEconomicTimes(BasicNewsRecipe):
     remove_attributes = ['style', 'height', 'width']
     publication_type = 'newspaper'
     masthead_url = 'https://upload.wikimedia.org/wikipedia/commons/9/98/The_Economic_Times_logo.svg'
-    cover_url = 'https://www.readwhere.com/read/imageapi/coverforissue/3034969/magazine/600'
     ignore_duplicate_articles = {'title', 'url'}
     extra_css = '''
-    .summary {font-weight:normal; font-size:normal; font-style:italic;}
-    time{font-size:small;}
+        .artByline {font-size:small;}
+        .artImg, .imgBox {font-size:small; color:#202020; text-align:center;}
+        img {display:block; margin:0 auto;}
     '''
+
+    def get_cover_url(self):
+        from datetime import date
+
+        yr = str(date.today().year)
+        mn = date.today().strftime('%m')
+        dy = date.today().strftime('%d')
+        cover = 'https://asset.harnscloud.com/PublicationData/ET/etbg/' + yr + '/' + mn + '/' + dy + '/Page/' + dy + '_' + mn + '_' + yr + '_001_etbg.jpg'
+        self.log('cover_url ', cover)
+        br = BasicNewsRecipe.get_browser(self)
+        try:
+            br.open(cover)
+        except Exception:
+            self.log('\nCover unavailable')
+            cover = None
+        return cover
 
     keep_only_tags = [
         dict(name='h1'),
-        classes(
-            'artByline artSyn artImg artText publisher publish_on slideshowPackage'
-        ),
+        classes('artByline pageContent'),
     ]
     remove_tags = [
+        dict(name='button'),
         classes(
-            'story_title storyCollection shareBar sr_widget_free jsSrWidgetFree srwidgetfree_3'
-            ' sr_paid jsSrWidgetPaid ar_wrp arwd_ld_chk adBox custom_ad mgid orn_free_r bold'
+            'story_title storyCollection shareBar sr_widget_free jsSrWidgetFree srwidgetfree_3 showWhatsMsg artSyn'
+            ' sr_paid jsSrWidgetPaid ar_wrp arwd_ld_chk adBox custom_ad mgid orn_free_r bold primeSWrapper external_widget'
         ),
     ]
 
     def parse_index(self):
-        soup = self.index_to_soup(
-            'https://economictimes.indiatimes.com/print_edition.cms'
-        )
+        self.log('\n***\nif this recipe fails, report it on: https://www.mobileread.com/forums/forumdisplay.php?f=228\n***\n')
+        soup = self.index_to_soup('https://economictimes.indiatimes.com/print_edition.cms')
+        date = soup.find(**classes('labelDate'))
+        if date:
+            self.timefmt = ' [' + self.tag_to_string(date).strip() + ']'
+            self.log(self.timefmt)
         ans = self.et_parse_index(soup)
         return ans
 
@@ -54,14 +73,9 @@ class TheEconomicTimes(BasicNewsRecipe):
             secname = re.sub(r'[0-9]', '', sec)
             self.log(secname)
             articles = []
-            for h3 in section.findAll(("h1", "h3", "h4", "h5")):
-                span = h3.find(
-                    'span',
-                    href=lambda x: x and x.startswith('/epaper/'),
-                    attrs={'class': 'banner'}
-                )
+            for h3 in section.findAll(('h1', 'h3', 'h4', 'h5')):
+                span = h3.find('span', href=lambda x: x and x.startswith('https://economictimes.indiatimes.com/epaper/'), attrs={'class': 'banner'})
                 url = span['href']
-                url = 'https://economictimes.indiatimes.com' + url
                 title = self.tag_to_string(span)
                 div = h3.find_next_sibling('div', attrs={'class': 'dsc'})
                 if div is not None:
@@ -76,7 +90,7 @@ class TheEconomicTimes(BasicNewsRecipe):
 
     def preprocess_html(self, soup):
         for image in soup.findAll('img', attrs={'src': True}):
-            image['src'] = image['src'].replace("width-300", "width-640")
+            image['src'] = image['src'].replace('width-300', 'width-640')
         for img in soup.findAll('img', attrs={'data-original': True}):
-            img['src'] = img['data-original'].replace('photo', 'thumb').replace('quality-100', 'quality-100,width-600,resizemode-4')
+            img['src'] = img['data-original']
         return soup

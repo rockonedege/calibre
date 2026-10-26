@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid@kovidgoyal.net>
 
 DOC = '''
 Trailing Byte Sequences contain information about which index entries touch a
@@ -16,16 +12,26 @@ For the exact algorithm, see separate_strands(). The strands are then encoded
 into 'sequences', see encode_strands_as_sequences() and finally the sequences
 are turned into bytes.
 '''
-from collections import namedtuple, OrderedDict
+from collections import OrderedDict
 from operator import attrgetter
+from typing import NamedTuple
 
-from calibre.ebooks.mobi.utils import (encode_trailing_data,
-        encode_tbs)
-from polyglot.builtins import iteritems, itervalues
+from calibre.ebooks.mobi.utils import encode_tbs, encode_trailing_data
 
-Entry = namedtuple('IndexEntry', 'index start length depth parent '
-        'first_child last_child title action start_offset length_offset '
-        'text_record_length')
+
+class Entry(NamedTuple):
+    index: int
+    start: int
+    length: int
+    depth: int
+    parent: int | None
+    first_child: int | None
+    last_child: int | None
+    title: int | None
+    action: int | None
+    start_offset: int | None
+    length_offset: int | None
+    text_record_length: int | None
 
 
 def fill_entry(entry, start_offset, text_record_length):
@@ -35,8 +41,7 @@ def fill_entry(entry, start_offset, text_record_length):
     else:
         action = 'starts' if length_offset > text_record_length else 'completes'
 
-    return Entry(*(entry[:-4] + (action, start_offset, length_offset,
-        text_record_length)))
+    return Entry(*(entry[:-4] + (action, start_offset, length_offset, text_record_length)))
 
 
 def populate_strand(parent, entries):
@@ -54,7 +59,7 @@ def populate_strand(parent, entries):
         current_index = parent.index
         siblings = []
         for entry in list(entries):
-            if (entry.depth == parent.depth and entry.parent == parent.parent and entry.index == current_index+1):
+            if entry.depth == parent.depth and entry.parent == parent.parent and entry.index == current_index + 1:
                 current_index += 1
                 entries.remove(entry)
                 children = [c for c in entries if c.parent == entry.index]
@@ -82,8 +87,8 @@ def separate_strands(entries):
 
 
 def collect_indexing_data(entries, text_record_lengths):
-    ''' For every text record calculate which index entries start, end, span or
-    are contained within that record. Arrange these entries in 'strands'. '''
+    """For every text record calculate which index entries start, end, span or
+    are contained within that record. Arrange these entries in 'strands'."""
 
     data = []
     entries = sorted(entries, key=attrgetter('start'))
@@ -99,8 +104,7 @@ def collect_indexing_data(entries, text_record_lengths):
             if entry.start + entry.length <= record_start:
                 # This entry does not touch this record
                 continue
-            local_entries.append(fill_entry(entry, entry.start - record_start,
-                rec_length))
+            local_entries.append(fill_entry(entry, entry.start - record_start, rec_length))
 
         strands = separate_strands(local_entries)
         data.append(strands)
@@ -114,30 +118,30 @@ class NegativeStrandIndex(Exception):
 
 
 def encode_strands_as_sequences(strands, tbs_type=8):
-    ''' Encode the list of strands for a single text record into a list of
-    sequences, ready to be converted into TBS bytes.    '''
+    """Encode the list of strands for a single text record into a list of
+    sequences, ready to be converted into TBS bytes."""
     ans = []
     last_index = None
     max_length_offset = 0
     first_entry = None
     for strand in strands:
-        for entries in itervalues(strand):
+        for entries in strand.values():
             for entry in entries:
                 if first_entry is None:
                     first_entry = entry
-                if entry.length_offset > max_length_offset:
-                    max_length_offset = entry.length_offset
+                max_length_offset = max(max_length_offset, entry.length_offset)
 
     for strand in strands:
         strand_seqs = []
-        for depth, entries in iteritems(strand):
+        for depth, entries in strand.items():
             extra = {}
             if entries[-1].action == 'spans':
                 extra[0b1] = 0
             elif False and (
-                    entries[-1].length_offset < entries[-1].text_record_length and
-                    entries[-1].action == 'completes' and
-                    entries[-1].length_offset != max_length_offset):
+                entries[-1].length_offset < entries[-1].text_record_length
+                and entries[-1].action == 'completes'
+                and entries[-1].length_offset != max_length_offset
+            ):
                 # I can't figure out exactly when kindlegen decides to insert
                 # this, so disable it for now.
                 extra[0b1] = entries[-1].length_offset
@@ -169,7 +173,7 @@ def encode_strands_as_sequences(strands, tbs_type=8):
         # spans entry.
         for i, seq in enumerate(strand_seqs):
             if i + 1 < len(strand_seqs):
-                if 0b1 in seq[1] and 0b1 in strand_seqs[i+1][1]:
+                if 0b1 in seq[1] and 0b1 in strand_seqs[i + 1][1]:
                     del seq[1][0b1]
         ans.extend(strand_seqs)
 
@@ -191,14 +195,28 @@ def calculate_all_tbs(indexing_data, tbs_type=8):
     for i, strands in enumerate(indexing_data):
         sequences = encode_strands_as_sequences(strands, tbs_type=tbs_type)
         tbs_bytes = sequences_to_bytes(sequences)
-        rmap[i+1] = tbs_bytes
+        rmap[i + 1] = tbs_bytes
     return rmap
 
 
 def apply_trailing_byte_sequences(index_table, records, text_record_lengths):
-    entries = tuple(Entry(r['index'], r['offset'], r['length'], r['depth'],
-        r.get('parent', None), r.get('first_child', None), r.get('last_child',
-            None), r['label'], None, None, None, None) for r in index_table)
+    entries = tuple(
+        Entry(
+            r['index'],
+            r['offset'],
+            r['length'],
+            r['depth'],
+            r.get('parent', None),
+            r.get('first_child', None),
+            r.get('last_child', None),
+            r['label'],
+            None,
+            None,
+            None,
+            None,
+        )
+        for r in index_table
+    )
 
     indexing_data = collect_indexing_data(entries, text_record_lengths)
     try:
@@ -206,7 +224,7 @@ def apply_trailing_byte_sequences(index_table, records, text_record_lengths):
     except NegativeStrandIndex:
         rmap = calculate_all_tbs(indexing_data, tbs_type=5)
 
-    for i, tbs_bytes in iteritems(rmap):
+    for i, tbs_bytes in rmap.items():
         records[i] += encode_trailing_data(tbs_bytes)
 
     return True

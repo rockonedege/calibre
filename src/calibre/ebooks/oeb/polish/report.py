@@ -1,24 +1,32 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import posixpath, os, time, types
-from collections import namedtuple, defaultdict
+import os
+import posixpath
+import time
+import types
+from collections import defaultdict
 from itertools import chain
+from typing import NamedTuple
 
-from calibre import prepare_string_for_xml, force_unicode
+from css_selectors import Select, SelectorError
+
+from calibre import force_unicode, prepare_string_for_xml
 from calibre.ebooks.oeb.base import XPath, xml2text
 from calibre.ebooks.oeb.polish.container import OEB_DOCS, OEB_STYLES
+from calibre.ebooks.oeb.polish.spell import count_all_chars, get_all_words
 from calibre.ebooks.oeb.polish.utils import OEB_FONTS
-from calibre.ebooks.oeb.polish.spell import get_all_words, count_all_chars
 from calibre.utils.icu import numeric_sort_key, safe_chr
 from calibre.utils.imghdr import identify
-from css_selectors import Select, SelectorError
-from polyglot.builtins import iteritems
 
-File = namedtuple('File', 'name dir basename size category')
+
+class File(NamedTuple):
+    name: str
+    dir: str
+    basename: str
+    size: int
+    category: str
+    word_count: int
 
 
 def get_category(name, mt):
@@ -32,7 +40,7 @@ def get_category(name, mt):
     elif mt in OEB_DOCS:
         category = 'text'
     ext = name.rpartition('.')[-1].lower()
-    if ext in {'ttf', 'otf', 'woff'}:
+    if ext in {'ttf', 'otf', 'woff', 'woff2'}:
         # Probably wrong mimetype in the OPF
         category = 'font'
     elif ext == 'opf':
@@ -60,21 +68,41 @@ def safe_img_data(container, name, mt):
 
 
 def files_data(container, *args):
-    for name, path in iteritems(container.name_path_map):
-        yield File(name, posixpath.dirname(name), posixpath.basename(name), safe_size(container, name),
-                   get_category(name, container.mime_map.get(name, '')))
+    fwc = file_words_counts or {}
+    for name, path in container.name_path_map.items():
+        yield File(
+            name,
+            posixpath.dirname(name),
+            posixpath.basename(name),
+            safe_size(container, name),
+            get_category(name, container.mime_map.get(name, '')),
+            fwc.get(name, -1),
+        )
 
 
-Image = namedtuple('Image', 'name mime_type usage size basename id width height')
+class Image(NamedTuple):
+    name: str
+    mime_type: str
+    usage: list[str]
+    size: int
+    basename: str
+    id: int
+    width: int
+    height: int
 
-LinkLocation = namedtuple('LinkLocation', 'name line_number text_on_line')
+
+class LinkLocation(NamedTuple):
+    name: str
+    line_number: int | None
+    text_on_line: str | None
 
 
 def sort_locations(container, locations):
-    nmap = {n:i for i, (n, l) in enumerate(container.spine_names)}
+    nmap = {n: i for i, (n, l) in enumerate(container.spine_names)}
 
     def sort_key(l):
         return (nmap.get(l.name, len(nmap)), numeric_sort_key(l.name), l.line_number)
+
     return sorted(locations, key=sort_key)
 
 
@@ -88,7 +116,7 @@ def safe_href_to_name(container, href, base):
 def images_data(container, *args):
     image_usage = defaultdict(set)
     link_sources = OEB_STYLES | OEB_DOCS
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt in link_sources:
             for href, line_number, offset in container.iterlinks(name):
                 target = safe_href_to_name(container, href, name)
@@ -98,10 +126,19 @@ def images_data(container, *args):
                         image_usage[target].add(LinkLocation(name, line_number, href))
 
     image_data = []
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt.startswith('image/') and container.exists(name):
-            image_data.append(Image(name, mt, sort_locations(container, image_usage.get(name, set())), safe_size(container, name),
-                                    posixpath.basename(name), len(image_data), *safe_img_data(container, name, mt)))
+            image_data.append(
+                Image(
+                    name,
+                    mt,
+                    sort_locations(container, image_usage.get(name, set())),
+                    safe_size(container, name),
+                    posixpath.basename(name),
+                    len(image_data),
+                    *safe_img_data(container, name, mt),
+                )
+            )
     return tuple(image_data)
 
 
@@ -141,8 +178,21 @@ def create_anchor_map(root, pat, name):
     return ans
 
 
-Anchor = namedtuple('Anchor', 'id location text')
-L = namedtuple('Link', 'location text is_external href path_ok anchor_ok anchor ok')
+class Anchor(NamedTuple):
+    id: str | None
+    location: LinkLocation | None
+    text: str | None
+
+
+class LinkItem(NamedTuple):
+    location: str
+    text: str
+    is_external: bool
+    href: str
+    path_ok: bool
+    anchor_ok: bool
+    anchor: Anchor
+    ok: bool | None
 
 
 def Link(location, text, is_external, href, path_ok, anchor_ok, anchor):
@@ -150,7 +200,7 @@ def Link(location, text, is_external, href, path_ok, anchor_ok, anchor):
         ok = None
     else:
         ok = path_ok and anchor_ok
-    return L(location, text, is_external, href, path_ok, anchor_ok, anchor, ok)
+    return LinkItem(location, text, is_external, href, path_ok, anchor_ok, anchor, ok)
 
 
 def links_data(container, *args):
@@ -158,7 +208,7 @@ def links_data(container, *args):
     links = []
     anchor_pat = XPath('//*[@id or @name]')
     link_pat = XPath('//h:a[@href]')
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt in OEB_DOCS:
             root = container.parsed(name)
             anchor_map[name] = create_anchor_map(root, anchor_pat, name)
@@ -179,58 +229,109 @@ def links_data(container, *args):
     for base, frag, dest, location, text in links:
         if dest is None:
             link = Link(location, text, True, base, True, True, Anchor(frag, None, None))
-        else:
-            if dest in anchor_map:
-                loc = LinkLocation(dest, None, None)
-                if frag:
-                    anchor = anchor_map[dest].get(frag)
-                    if anchor is None:
-                        link = Link(location, text, False, dest, True, False, Anchor(frag, loc, None))
-                    else:
-                        link = Link(location, text, False, dest, True, True, Anchor(frag, *anchor))
+        elif dest in anchor_map:
+            loc = LinkLocation(dest, None, None)
+            if frag:
+                anchor = anchor_map[dest].get(frag)
+                if anchor is None:
+                    link = Link(location, text, False, dest, True, False, Anchor(frag, loc, None))
                 else:
-                    link = Link(location, text, False, dest, True, True, Anchor(None, loc, None))
+                    link = Link(location, text, False, dest, True, True, Anchor(frag, *anchor))
             else:
-                link = Link(location, text, False, dest, False, False, Anchor(frag, None, None))
+                link = Link(location, text, False, dest, True, True, Anchor(None, loc, None))
+        else:
+            link = Link(location, text, False, dest, False, False, Anchor(frag, None, None))
         yield link
 
 
-Word = namedtuple('Word', 'id word locale usage')
+class Word(NamedTuple):
+    id: int
+    word: str
+    locale: str
+    usage: list[str]
+
+
+file_words_counts = None
 
 
 def words_data(container, book_locale, *args):
-    count, words = get_all_words(container, book_locale, get_word_count=True)
-    return (count, tuple(Word(i, word, locale, v) for i, ((word, locale), v) in enumerate(iteritems(words))))
+    count, words = get_all_words(container, book_locale, get_word_count=True, file_words_counts=file_words_counts)
+    return (count, tuple(Word(i, word, locale, v) for i, ((word, locale), v) in enumerate(words.items())))
 
 
-Char = namedtuple('Char', 'id char codepoint usage count')
+class Char(NamedTuple):
+    id: int
+    char: str
+    codepoint: int
+    usage: list[str]
+    count: int
 
 
 def chars_data(container, book_locale, *args):
     cc = count_all_chars(container, book_locale)
-    nmap = {n:i for i, (n, l) in enumerate(container.spine_names)}
+    nmap = {n: i for i, (n, l) in enumerate(container.spine_names)}
 
     def sort_key(name):
         return nmap.get(name, len(nmap)), numeric_sort_key(name)
 
-    for i, (codepoint, usage) in enumerate(iteritems(cc.chars)):
-        yield Char(i, safe_chr(codepoint), codepoint, sorted(usage, key=sort_key), cc.counter[codepoint])
+    for i, (codepoint, usage) in enumerate(cc.chars.items()):
+        if c := safe_chr(codepoint):
+            yield Char(i, c, codepoint, sorted(usage, key=sort_key), cc.counter[codepoint])
 
 
-CSSRule = namedtuple('CSSRule', 'selector location')
-RuleLocation = namedtuple('RuleLocation', 'file_name line column')
-MatchLocation = namedtuple('MatchLocation', 'tag sourceline')
-CSSEntry = namedtuple('CSSEntry', 'rule count matched_files sort_key')
-CSSFileMatch = namedtuple('CSSFileMatch', 'file_name locations sort_key')
+class CSSRule(NamedTuple):
+    selector: str
+    location: RuleLocation
 
-ClassEntry = namedtuple('ClassEntry', 'cls num_of_matches matched_files sort_key')
-ClassFileMatch = namedtuple('ClassFileMatch', 'file_name class_elements sort_key')
-ClassElement = namedtuple('ClassElement', 'name line_number text_on_line tag matched_rules')
+
+class RuleLocation(NamedTuple):
+    file_name: str
+    line: int
+    column: int
+
+
+class MatchLocation(NamedTuple):
+    tag: str
+    sourceline: int
+
+
+class CSSEntry(NamedTuple):
+    rule: str
+    count: int
+    matched_files: tuple[CSSFileMatch, ...]
+    sort_key: bytes
+
+
+class CSSFileMatch(NamedTuple):
+    file_name: str
+    locations: tuple[str, ...]
+    sort_key: bytes
+
+
+class ClassEntry(NamedTuple):
+    cls: str
+    num_of_matches: int
+    matched_files: tuple[ClassFileMatch, ...]
+    sort_key: bytes
+
+
+class ClassFileMatch(NamedTuple):
+    file_name: str
+    class_elements: tuple[ClassElement, ...]
+    sort_key: bytes
+
+
+class ClassElement(NamedTuple):
+    name: str
+    line_number: int
+    text_on_line: str | None
+    tag: str
+    matched_rules: tuple[MatchLocation, ...]
 
 
 def css_data(container, book_locale, result_data, *args):
     import tinycss
-    from tinycss.css21 import RuleSet, ImportRule
+    from tinycss.css21 import ImportRule, RuleSet
 
     def css_rules(file_name, rules, sourceline=0):
         ans = []
@@ -252,7 +353,7 @@ def css_data(container, book_locale, result_data, *args):
     spine_names = {name for name, is_linear in container.spine_names}
     style_path, link_path = XPath('//h:style'), XPath('//h:link/@href')
 
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt in OEB_STYLES:
             importable_sheets[name] = css_rules(name, parser.parse_stylesheet(container.raw_data(name)).rules)
         elif mt in OEB_DOCS and name in spine_names:
@@ -260,9 +361,14 @@ def css_data(container, book_locale, result_data, *args):
             for style in style_path(container.parsed(name)):
                 if style.get('type', 'text/css') == 'text/css' and style.text:
                     html_sheets[name].append(
-                        css_rules(name, parser.parse_stylesheet(force_unicode(style.text, 'utf-8')).rules, style.sourceline - 1))
+                        css_rules(
+                            name,
+                            parser.parse_stylesheet(force_unicode(style.text, 'utf-8')).rules,
+                            style.sourceline - 1,
+                        )
+                    )
 
-    rule_map = defaultdict(lambda : defaultdict(list))
+    rule_map = defaultdict(lambda: defaultdict(list))
 
     def rules_in_sheet(sheet):
         for rule in sheet:
@@ -288,8 +394,11 @@ def css_data(container, book_locale, result_data, *args):
             tag = elem.tag.rpartition('}')[-1]
             if elem.attrib:
                 attribs = ' '.join('{}="{}"'.format(k, prepare_string_for_xml(elem.get(k, ''), True)) for k in elem.keys())
-                return f'<{tag} {attribs}>'
-            ans = tt_cache[elem] = '<%s>' % tag
+                ans = f'<{tag} {attribs}>'
+            else:
+                ans = f'<{tag}>'
+            tt_cache[elem] = ans
+        return ans
 
     def matches_for_selector(selector, select, class_map, rule):
         lsel = selector.lower()
@@ -315,11 +424,11 @@ def css_data(container, book_locale, result_data, *args):
 
         return (MatchLocation(tag_text(elem), elem.sourceline) for elem in matches)
 
-    class_map = defaultdict(lambda : defaultdict(list))
+    class_map = defaultdict(lambda: defaultdict(list))
 
-    for name, inline_sheets in iteritems(html_sheets):
+    for name, inline_sheets in html_sheets.items():
         root = container.parsed(name)
-        cmap = defaultdict(lambda : defaultdict(list))
+        cmap = defaultdict(lambda: defaultdict(list))
         for elem in root.xpath('//*[@class]'):
             for cls in elem.get('class', '').split():
                 cmap[cls][elem] = []
@@ -327,21 +436,20 @@ def css_data(container, book_locale, result_data, *args):
         for sheet in chain(sheets_for_html(name, root), inline_sheets):
             for rule in rules_in_sheet(sheet):
                 rule_map[rule][name].extend(matches_for_selector(rule.selector, select, cmap, rule))
-        for cls, elem_map in iteritems(cmap):
+        for cls, elem_map in cmap.items():
             class_elements = class_map[cls][name]
-            for elem, usage in iteritems(elem_map):
-                class_elements.append(
-                    ClassElement(name, elem.sourceline, elem.get('class'), tag_text(elem), tuple(usage)))
+            for elem, usage in elem_map.items():
+                class_elements.append(ClassElement(name, elem.sourceline, elem.get('class'), tag_text(elem), tuple(usage)))
 
     result_data['classes'] = ans = []
-    for cls, name_map in iteritems(class_map):
-        la = tuple(ClassFileMatch(name, tuple(class_elements), numeric_sort_key(name)) for name, class_elements in iteritems(name_map) if class_elements)
+    for cls, name_map in class_map.items():
+        la = tuple(ClassFileMatch(name, tuple(class_elements), numeric_sort_key(name)) for name, class_elements in name_map.items() if class_elements)
         num_of_matches = sum(sum(len(ce.matched_rules) for ce in cfm.class_elements) for cfm in la)
         ans.append(ClassEntry(cls, num_of_matches, la, numeric_sort_key(cls)))
 
     ans = []
-    for rule, loc_map in iteritems(rule_map):
-        la = tuple(CSSFileMatch(name, tuple(locations), numeric_sort_key(name)) for name, locations in iteritems(loc_map) if locations)
+    for rule, loc_map in rule_map.items():
+        la = tuple(CSSFileMatch(name, tuple(locations), numeric_sort_key(name)) for name, locations in loc_map.items() if locations)
         count = sum(len(fm.locations) for fm in la)
         ans.append(CSSEntry(rule, count, la, numeric_sort_key(rule.selector)))
 
@@ -349,12 +457,25 @@ def css_data(container, book_locale, result_data, *args):
 
 
 def gather_data(container, book_locale):
+    global file_words_counts
     timing = {}
     data = {}
-    for x in 'files chars images links words css'.split():
+    file_words_counts = {}
+    for x in 'chars images links words css files'.split():
         st = time.time()
         data[x] = globals()[x + '_data'](container, book_locale, data)
         if isinstance(data[x], types.GeneratorType):
             data[x] = tuple(data[x])
         timing[x] = time.time() - st
+    file_words_counts = None
     return data, timing
+
+
+def debug_data_gather():
+    import sys
+
+    from calibre.gui2.tweak_book import dictionaries
+    from calibre.gui2.tweak_book.boss import get_container
+
+    c = get_container(sys.argv[-1])
+    gather_data(c, dictionaries.default_locale)

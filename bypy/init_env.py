@@ -1,17 +1,15 @@
 #!/usr/bin/env python
-# vim:fileencoding=utf-8
 # License: GPL v3 Copyright: 2019, Kovid Goyal <kovid at kovidgoyal.net>
 
+import ast
 import json
 import os
 import re
 import subprocess
 import sys
 
-from bypy.constants import (
-    LIBDIR, PREFIX, PYTHON, SRC as CALIBRE_DIR, build_dir, islinux, ismacos,
-    worker_env
-)
+from bypy.constants import LIBDIR, PREFIX, PYTHON, build_dir, islinux, ismacos, worker_env
+from bypy.constants import SRC as CALIBRE_DIR
 from bypy.utils import run_shell
 
 dlls = [
@@ -26,26 +24,30 @@ dlls = [
     # 'WebView',
     'Positioning',
     'Sensors',
+    'SpatialAudio',
     'Sql',
     'Svg',
+    'TextToSpeech',
     'WebChannel',
     'WebEngineCore',
     'WebEngineWidgets',
     'Widgets',
-    # 'Multimedia',
+    'Multimedia',
+    'MultimediaWidgets',
     'OpenGL',
     'OpenGLWidgets',
     'Quick',
     'QuickWidgets',
     'Qml',
+    'QmlMeta',
     'QmlModels',
-    # 'MultimediaWidgets',
+    'QmlWorkerScript',
     'Xml',
     # 'XmlPatterns',
 ]
 
 if islinux:
-    dlls += ['XcbQpa', 'WaylandClient', 'WaylandEglClientHwIntegration', 'DBus']
+    dlls += ['XcbQpa', 'WaylandClient', 'DBus']
 elif ismacos:
     dlls += ['DBus']
 
@@ -58,6 +60,8 @@ QT_PLUGINS = [
     'imageformats',
     'iconengines',
     'tls',
+    'multimedia',
+    'texttospeech',
     # 'mediaservice',
     'platforms',
     # 'playlistformats',
@@ -84,7 +88,8 @@ PYQT_MODULES = (
     'QtCore',
     'QtGui',
     'QtNetwork',
-    # 'QtMultimedia', 'QtMultimediaWidgets',
+    'QtMultimedia', 'QtMultimediaWidgets',
+    'QtTextToSpeech',
     'QtPrintSupport',
     'QtSensors',
     'QtSvg',
@@ -108,26 +113,43 @@ def initialize_constants():
     calibre_constants = {}
     src = read_cal_file('constants.py')
     nv = re.search(r'numeric_version\s+=\s+\((\d+), (\d+), (\d+)\)', src)
+    assert nv is not None
     calibre_constants['version'
                       ] = '%s.%s.%s' % (nv.group(1), nv.group(2), nv.group(3))
-    calibre_constants['appname'] = re.search(
-        r'__appname__\s+=\s+(u{0,1})[\'"]([^\'"]+)[\'"]', src
-    ).group(2)
-    epsrc = re.compile(r'entry_points = (\{.*?\})',
-                       re.DOTALL).search(read_cal_file('linux.py')).group(1)
-    entry_points = eval(epsrc, {'__appname__': calibre_constants['appname']})
+    def get_str_assign(which):
+        pat = r'__appname__\s+=\s+(u{0,1})[\'"]([^\'"]+)[\'"]'.replace('__appname__', which)
+        m = re.search(pat, src)
+        assert m is not None
+        return m.group(2)
+
+    calibre_constants['appname'] = get_str_assign('__appname__')
+    calibre_constants['MAIN_APP_UID'] = get_str_assign('MAIN_APP_UID')
+    calibre_constants['VIEWER_APP_UID'] = get_str_assign('VIEWER_APP_UID')
+    calibre_constants['EDITOR_APP_UID'] = get_str_assign('EDITOR_APP_UID')
+    ep_match = re.compile(r'entry_points = (\{.*?\})',
+                          re.DOTALL).search(read_cal_file('linux.py'))
+    assert ep_match is not None
+    epsrc = ep_match.group(1)
+    epsrc = epsrc.replace('__appname__ +', repr(calibre_constants['appname']))
+    try:
+        entry_points = ast.literal_eval(epsrc)
+    except Exception as e:
+        raise ValueError(f'could not evaluate {epsrc}') from e
 
     def e2b(ep):
-        return re.search(r'\s*(.*?)\s*=', ep).group(1).strip()
+        m = re.search(r'\s*(.*?)\s*=', ep)
+        assert m is not None
+        return m.group(1).strip()
 
     def e2s(ep, base='src'):
-        return (
-            base + os.path.sep +
-            re.search(r'.*=\s*(.*?):', ep).group(1).replace('.', '/') + '.py'
-        ).strip()
+        m = re.search(r'.*=\s*(.*?):', ep)
+        assert m is not None
+        return (base + os.path.sep + m.group(1).replace('.', '/') + '.py').strip()
 
     def e2m(ep):
-        return re.search(r'.*=\s*(.*?)\s*:', ep).group(1).strip()
+        m = re.search(r'.*=\s*(.*?)\s*:', ep)
+        assert m is not None
+        return m.group(1).strip()
 
     def e2f(ep):
         return ep[ep.rindex(':') + 1:].strip()
@@ -144,10 +166,12 @@ def initialize_constants():
         scripts[x] = list(map(e2s, entry_points[y]))
 
     src = read_cal_file('ebooks/__init__.py')
-    be = re.search(
+    be_match = re.search(
         r'^BOOK_EXTENSIONS\s*=\s*(\[.+?\])', src, flags=re.DOTALL | re.MULTILINE
-    ).group(1)
-    calibre_constants['book_extensions'] = json.loads(be.replace("'", '"'))
+    )
+    assert be_match is not None
+    be = be_match.group(1)
+    calibre_constants['book_extensions'] = ast.literal_eval(be)
     return calibre_constants
 
 
@@ -170,8 +194,9 @@ def build_c_extensions(ext_dir, args):
     ]
     if args.build_only:
         cmd.extend(('--only', args.build_only))
-    if run(*cmd, COMPILER_CWD=bdir) != 0:
-        print('Building of calibre C extensions failed', file=sys.stderr)
+    rc = run(*cmd, COMPILER_CWD=bdir)
+    if rc != 0:
+        print('Building of calibre C extensions failed, returncode:', rc, 'Failing cmd:', cmd, file=sys.stderr)
         os.chdir(CALIBRE_DIR)
         run_shell()
         raise SystemExit('Building of calibre C extensions failed')

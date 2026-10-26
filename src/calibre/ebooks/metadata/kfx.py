@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>, John Howell <jhowell@acm.org>'
 
-
 # Based on work of John Howell reversing the KFX format
 # https://www.mobileread.com/forums/showpost.php?p=3176029&postcount=89
 
-import struct, sys, re
+import re
+import struct
+import sys
 from collections import defaultdict
 
 from calibre.ebooks.metadata.book.base import Metadata
@@ -13,8 +14,8 @@ from calibre.ebooks.mobi.utils import decint
 from calibre.utils.cleantext import clean_xml_chars
 from calibre.utils.config_base import tweaks
 from calibre.utils.date import parse_only_date
-from calibre.utils.localization import canonicalize_lang
 from calibre.utils.imghdr import identify
+from calibre.utils.localization import _, canonicalize_lang
 from polyglot.binary import as_base64_bytes, from_base64_bytes
 
 
@@ -28,15 +29,15 @@ ENTITY_MAGIC = b'ENTY'
 ION_MAGIC = b'\xe0\x01\x00\xea'
 
 # ION data types (comment shows equivalent python data type produced)
-DT_BOOLEAN = 1          # True/False
-DT_INTEGER = 2          # int
+DT_BOOLEAN = 1  # True/False
+DT_INTEGER = 2  # int
 # str (using non-unicode to distinguish symbols from strings)
 DT_PROPERTY = 7
-DT_STRING = 8           # unicode
-DT_STRUCT = 11          # tuple
-DT_LIST = 12            # list
-DT_OBJECT = 13          # dict of property/value pairs
-DT_TYPED_DATA = 14      # type, name, value
+DT_STRING = 8  # unicode
+DT_STRUCT = 11  # tuple
+DT_LIST = 12  # list
+DT_OBJECT = 13  # dict of property/value pairs
+DT_TYPED_DATA = 14  # type, name, value
 
 # property names (non-unicode strings to distinguish them from ION strings in this program)
 # These are place holders. The correct property names are unknown.
@@ -48,14 +49,14 @@ PROP_METADATA_VALUE = b'P307'
 PROP_IMAGE = b'P417'
 
 METADATA_PROPERTIES = {
-    b'P10' : "languages",
-    b'P153': "title",
-    b'P154': "description",
-    b'P222': "author",
-    b'P232': "publisher",
+    b'P10': 'languages',
+    b'P153': 'title',
+    b'P154': 'description',
+    b'P222': 'author',
+    b'P232': 'publisher',
 }
 
-COVER_KEY = "cover_image_base64"
+COVER_KEY = 'cover_image_base64'
 
 
 def hexs(string, sep=' '):
@@ -63,14 +64,13 @@ def hexs(string, sep=' '):
         string = bytearray(string)
     else:
         string = map(ord, string)
-    return sep.join('%02x' % b for b in string)
+    return sep.join(f'{b:02x}' for b in string)
 
 
 class PackedData:
-
-    '''
+    """
     Simplify unpacking of packed binary data structures
-    '''
+    """
 
     def __init__(self, data):
         self.buffer = data
@@ -87,7 +87,7 @@ class PackedData:
         return result
 
     def extract(self, size):
-        data = self.buffer[self.offset:self.offset + size]
+        data = self.buffer[self.offset : self.offset + size]
         self.advance(size)
         return data
 
@@ -99,28 +99,25 @@ class PackedData:
 
 
 class PackedBlock(PackedData):
-
-    '''
+    """
     Common header structure of container and entity blocks
-    '''
+    """
 
     def __init__(self, data, magic):
         PackedData.__init__(self, data)
 
         self.magic = self.unpack_one('4s')
         if self.magic != magic:
-            raise InvalidKFX('%s magic number is incorrect (%s)' %
-                            (magic, hexs(self.magic)))
+            raise InvalidKFX(f'{magic} magic number is incorrect ({hexs(self.magic)})')
 
         self.version = self.unpack_one('<H')
         self.header_len = self.unpack_one('<L')
 
 
 class Container(PackedBlock):
-
-    '''
+    """
     Container file containing data entities
-    '''
+    """
 
     def __init__(self, data):
         self.data = data
@@ -133,24 +130,22 @@ class Container(PackedBlock):
         while self.unpack_one('4s', advance=False) != ION_MAGIC:
             entity_id, entity_type, entity_offset, entity_len = self.unpack_multi('<LLQQ')
             entity_start = self.header_len + entity_offset
-            self.entities.append(
-                Entity(self.data[entity_start:entity_start + entity_len], entity_type, entity_id))
+            self.entities.append(Entity(self.data[entity_start : entity_start + entity_len], entity_type, entity_id))
 
     def decode(self):
         return [entity.decode() for entity in self.entities]
 
 
 class Entity(PackedBlock):
-
-    '''
+    """
     Data entity inside a container
-    '''
+    """
 
     def __init__(self, data, entity_type, entity_id):
         PackedBlock.__init__(self, data, ENTITY_MAGIC)
         self.entity_type = entity_type
         self.entity_id = entity_id
-        self.entity_data = data[self.header_len:]
+        self.entity_data = data[self.header_len :]
 
     def decode(self):
         if PackedData(self.entity_data).unpack_one('4s') == ION_MAGIC:
@@ -162,10 +157,9 @@ class Entity(PackedBlock):
 
 
 class PackedIon(PackedData):
-
-    '''
+    """
     Packed structured binary data format used by KFX
-    '''
+    """
 
     def __init__(self, data):
         PackedData.__init__(self, data)
@@ -180,7 +174,7 @@ class PackedIon(PackedData):
         cmd = self.unpack_one('B')
 
         data_type = cmd >> 4
-        data_len = cmd & 0x0f
+        data_len = cmd & 0x0F
         if data_len == 14:
             data_len = self.unpack_number()
 
@@ -198,7 +192,7 @@ class PackedIon(PackedData):
         if data_type == DT_STRING:
             return self.extract(data_len).decode('utf8')
 
-        if data_type == DT_STRUCT or data_type == DT_LIST:
+        if data_type in (DT_STRUCT, DT_LIST):
             ion = PackedIon(self.extract(data_len))
             result = []
 
@@ -214,7 +208,7 @@ class PackedIon(PackedData):
             ion = PackedIon(self.extract(data_len))
             result = {}
 
-            while (ion.remaining()):
+            while ion.remaining():
                 symbol = property_name(ion.unpack_number())
                 result[symbol] = ion.unpack_typed_value()
 
@@ -233,7 +227,7 @@ class PackedIon(PackedData):
     def unpack_number(self):
         # variable length numbers, MSB first, 7 bits per byte, last byte is
         # flagged by MSB set
-        raw = self.buffer[self.offset:self.offset+10]
+        raw = self.buffer[self.offset : self.offset + 10]
         number, consumed = decint(raw)
         self.advance(consumed)
         return number
@@ -246,7 +240,7 @@ class PackedIon(PackedData):
 def property_name(property_number):
     # This should be changed to translate property numbers to the proper
     # strings using a symbol table
-    return b"P%d" % property_number
+    return b'P%d' % property_number
 
 
 def extract_metadata(container_data):
@@ -281,11 +275,12 @@ def dump_metadata(m):
     d = dict(m)
     d[COVER_KEY] = bool(d.get(COVER_KEY))
     from pprint import pprint
+
     pprint(d)
 
 
 def read_book_key_kfx(stream, read_cover=True):
-    ' Read the metadata.kfx file that is found in the sdr book folder for KFX files '
+    "Read the metadata.kfx file that is found in the sdr book folder for KFX files"
     c = Container(stream.read())
     m = extract_metadata(c.decode())
 
@@ -296,7 +291,7 @@ def read_book_key_kfx(stream, read_cover=True):
 
 
 def read_metadata_kfx(stream, read_cover=True):
-    ' Read the metadata.kfx file that is found in the sdr book folder for KFX files '
+    "Read the metadata.kfx file that is found in the sdr book folder for KFX files"
     c = Container(stream.read())
     m = extract_metadata(c.decode())
     # dump_metadata(m)
@@ -323,7 +318,7 @@ def read_metadata_kfx(stream, read_cover=True):
                 return m.group(2) + ' ' + m.group(1)
         return x
 
-    unique_authors = []     # remove duplicates while retaining order
+    unique_authors = []  # remove duplicates while retaining order
     for f in [fix_author(x) for x in authors]:
         if f not in unique_authors:
             unique_authors.append(f)
@@ -360,6 +355,7 @@ def read_metadata_kfx(stream, read_cover=True):
 
 if __name__ == '__main__':
     from calibre import prints
+
     with open(sys.argv[-1], 'rb') as f:
         mi = read_metadata_kfx(f)
         prints(str(mi))

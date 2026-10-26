@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from functools import partial
+from urllib.parse import urlencode
 
 from lxml.html import tostring
 from lxml.html.builder import E as E_
@@ -12,33 +12,35 @@ from calibre.constants import __appname__
 from calibre.db.view import sanitize_sort_field_name
 from calibre.ebooks.metadata import authors_to_string
 from calibre.srv.content import book_filename, get
-from calibre.srv.errors import HTTPBadRequest, HTTPRedirect
+from calibre.srv.errors import BookNotFound, HTTPBadRequest, HTTPRedirect
+from calibre.srv.legacy_book_details import render_legacy_book_details
 from calibre.srv.routes import endpoint
 from calibre.srv.utils import get_library_data, http_date
 from calibre.utils.cleantext import clean_xml_chars
 from calibre.utils.date import dt_as_local, is_date_undefined, timestampfromdt
-from polyglot.builtins import iteritems, string_or_bytes, as_bytes
-from polyglot.urllib import urlencode
+from calibre.utils.localization import _
+from polyglot.builtins import as_bytes
 
 # /mobile {{{
 
 
 def clean(x):
-    if isinstance(x, string_or_bytes):
+    if isinstance(x, (str, bytes)):
         x = clean_xml_chars(x)
     return x
 
 
-def E(tag, *children, **attribs):
-    children = list(map(clean, children))
-    attribs = {k.rstrip('_').replace('_', '-'):clean(v) for k, v in iteritems(attribs)}
-    return getattr(E_, tag)(*children, **attribs)
+class _EBuilder:
+    def __call__(self, tag, *children, **attribs):
+        children = list(map(clean, children))
+        attribs = {k.rstrip('_').replace('_', '-'): clean(v) for k, v in attribs.items()}
+        return getattr(E_, tag)(*children, **attribs)
+
+    def __getattr__(self, tag):
+        return partial(self, tag)
 
 
-for tag in 'HTML HEAD TITLE LINK DIV IMG BODY OPTION SELECT INPUT FORM SPAN TABLE TR TD A HR META'.split():
-    setattr(E, tag, partial(E, tag))
-    tag = tag.lower()
-    setattr(E, tag, partial(E, tag))
+E = _EBuilder()
 
 
 def html(ctx, rd, endpoint, output):
@@ -46,7 +48,14 @@ def html(ctx, rd, endpoint, output):
     if isinstance(output, bytes):
         ans = output  # Assume output is already UTF-8 encoded html
     else:
-        ans = tostring(output, include_meta_content_type=True, pretty_print=True, encoding='utf-8', doctype='<!DOCTYPE html>', with_tail=False)
+        ans = tostring(
+            output,
+            include_meta_content_type=True,
+            pretty_print=True,
+            encoding='utf-8',
+            doctype='<!DOCTYPE html>',
+            with_tail=False,
+        )
         if not isinstance(ans, bytes):
             ans = ans.encode('utf-8')
     return ans
@@ -61,29 +70,29 @@ def build_search_box(num, search, sort, order, ctx, field_metadata, library_id):
 
     num_select = E.select(name='num')
     for option in (5, 10, 25, 100):
-        kwargs = {'value':str(option)}
+        kwargs = {'value': str(option)}
         if option == num:
             kwargs['SELECTED'] = 'SELECTED'
         num_select.append(E.option(str(option), **kwargs))
     num_select.tail = ' books matching '
     form.append(num_select)
 
-    searchf = E.input(name='search', id='s', value=search if search else '')
+    searchf = E.input(name='search', id='s', value=search or '')
     searchf.tail = _(' sorted by ')
     form.append(searchf)
 
     sort_select = E.select(name='sort')
-    for option in ('date','author','title','rating','size','tags','series'):
+    for option in ('date', 'author', 'title', 'rating', 'size', 'tags', 'series'):
         q = sanitize_sort_field_name(field_metadata, option)
-        kwargs = {'value':option}
+        kwargs = {'value': option}
         if q == sanitize_sort_field_name(field_metadata, sort):
             kwargs['SELECTED'] = 'SELECTED'
         sort_select.append(E.option(option, **kwargs))
     form.append(sort_select)
 
     order_select = E.select(name='order')
-    for option in ('ascending','descending'):
-        kwargs = {'value':option}
+    for option in ('ascending', 'descending'):
+        kwargs = {'value': option}
         if option == order:
             kwargs['SELECTED'] = 'SELECTED'
         order_select.append(E.option(option, **kwargs))
@@ -95,42 +104,48 @@ def build_search_box(num, search, sort, order, ctx, field_metadata, library_id):
     form.append(E.input(id='go', type='submit', value=_('Search')))
 
     return div
+
+
 # }}}
 
 
 def build_navigation(start, num, total, url_base):  # {{{
-    end = min((start+num-1), total)
-    tagline = E.span('Books %d to %d of %d'%(start, end, total),
-            style='display: block; text-align: center;')
+    end = min((start + num - 1), total)
+    tagline = E.span(f'Books {start} to {end} of {total}', style='display: block; text-align: center;')
     left_buttons = E.td(class_='button', style='text-align:left')
     right_buttons = E.td(class_='button', style='text-align:right')
 
     if start > 1:
-        for t,s in [('First', 1), ('Previous', max(start-num,1))]:
-            left_buttons.append(E.a(t, href='%s&start=%d'%(url_base, s)))
+        for t, s in [('First', 1), ('Previous', max(start - num, 1))]:
+            left_buttons.append(E.a(t, href=f'{url_base}&start={s}'))
 
     if total > start + num:
-        for t,s in [('Next', start+num), ('Last', total-num+1)]:
-            right_buttons.append(E.a(t, href='%s&start=%d'%(url_base, s)))
+        for t, s in [('Next', start + num), ('Last', total - num + 1)]:
+            right_buttons.append(E.a(t, href=f'{url_base}&start={s}'))
 
-    buttons = E.table(
-            E.tr(left_buttons, right_buttons),
-            class_='buttons')
+    buttons = E.table(E.tr(left_buttons, right_buttons), class_='buttons')
     return E.div(tagline, buttons, class_='navigation')
+
 
 # }}}
 
 
 def build_choose_library(ctx, library_map):
     select = E.select(name='library_id')
-    for library_id, library_name in iteritems(library_map):
+    for library_id, library_name in library_map.items():
         select.append(E.option(library_name, value=library_id))
     return E.div(
         E.form(
-            _('Change library to: '), select, ' ', E.input(type='submit', value=_('Change library')),
-            method='GET', action=ctx.url_for('/mobile'), accept_charset='UTF-8'
+            _('Change library to: '),
+            select,
+            ' ',
+            E.input(type='submit', value=_('Change library')),
+            method='GET',
+            action=ctx.url_for('/mobile'),
+            accept_charset='UTF-8',
         ),
-        id='choose_library')
+        id='choose_library',
+    )
 
 
 def build_index(rd, books, num, search, sort, order, start, total, url_base, field_metadata, ctx, library_map, library_id):  # {{{
@@ -142,20 +157,22 @@ def build_index(rd, books, num, search, sort, order, start, total, url_base, fie
         choose_library = build_choose_library(ctx, library_map)
     books_table = E.table(id='listing')
 
-    body = E.body(
-        logo,
-        search_box,
-        navigation,
-        E.hr(class_='spacer'),
-        books_table,
-        E.hr(class_='spacer'),
-        navigation2
-    )
+    body = E.body(logo, search_box, navigation, E.hr(class_='spacer'), books_table, E.hr(class_='spacer'), navigation2)
 
     for book in books:
+        # Link to book details page (legacy-safe)
+        book_link = ctx.url_for('/legacy/book', book_id=book.id, library_id=library_id)
+
         thumbnail = E.td(
-                E.img(type='image/jpeg', border='0', src=ctx.url_for('/get', what='thumb', book_id=book.id, library_id=library_id),
-                      class_='thumbnail')
+            E.a(
+                E.img(
+                    type='image/jpeg',
+                    border='0',
+                    src=ctx.url_for('/get', what='thumb', book_id=book.id, library_id=library_id),
+                    class_='thumbnail',
+                ),
+                href=book_link,  # Make cover clickable
+            )
         )
 
         data = E.td()
@@ -165,17 +182,24 @@ def build_index(rd, books, num, search, sort, order, start, total, url_base, fie
             s = E.span(
                 E.a(
                     fmt.lower(),
-                    href=ctx.url_for('/legacy/get', what=fmt, book_id=book.id, library_id=library_id, filename=book_filename(rd, book.id, book, fmt))
+                    href=ctx.url_for(
+                        '/legacy/get',
+                        what=fmt,
+                        book_id=book.id,
+                        library_id=library_id,
+                        filename=book_filename(rd, book.id, book, fmt),
+                    ),
                 ),
-                class_='button')
+                class_='button',
+            )
             s.tail = ''
             data.append(s)
 
         div = E.div(class_='data-container')
         data.append(div)
 
-        series = ('[%s - %s]'%(book.series, book.series_index)) if book.series else ''
-        tags = ('Tags=[%s]'%', '.join(book.tags)) if book.tags else ''
+        series = (f'[{book.series} - {book.series_index}]') if book.series else ''
+        tags = ('Tags=[{}]'.format(', '.join(book.tags))) if book.tags else ''
 
         ctext = ''
         for key in filter(ctx.is_field_displayable, field_metadata.ignorable_field_keys()):
@@ -184,11 +208,12 @@ def build_index(rd, books, num, search, sort, order, start, total, url_base, fie
                 continue
             name, val = book.format_field(key)
             if val:
-                ctext += '%s=[%s] '%(name, val)
+                ctext += f'{name}=[{val}] '
 
-        first = E.span('{} {} by {}'.format(book.title, series,
-            authors_to_string(book.authors)), class_='first-line')
+        # Make title clickable
+        first = E.span(E.a(f'{book.title} {series} by {authors_to_string(book.authors)}', href=book_link), class_='first-line')
         div.append(first)
+
         ds = '' if is_date_undefined(book.timestamp) else strftime('%d %b, %Y', t=dt_as_local(book.timestamp).timetuple())
         second = E.span(f'{ds} {tags} {ctext}', class_='second-line')
         div.append(second)
@@ -197,24 +222,30 @@ def build_index(rd, books, num, search, sort, order, start, total, url_base, fie
 
     if library_map:
         body.append(choose_library)
-    body.append(E.div(
-        E.a(_('Switch to the full interface (non-mobile interface)'),
-            href=ctx.url_for(None),
-            style="text-decoration: none; color: blue",
-            title=_('The full interface gives you many more features, '
-                    'but it may not work well on a small screen')),
-        style="text-align:center")
+    body.append(
+        E.div(
+            E.a(
+                _('Switch to the full interface (non-mobile interface)'),
+                href=ctx.url_for(None),
+                style='text-decoration: none; color: blue',
+                title=_('The full interface gives you many more features, but it may not work well on a small screen'),
+            ),
+            style='text-align:center',
+        )
     )
+
     return E.html(
         E.head(
             E.title(__appname__ + ' Library'),
             E.link(rel='icon', href=ctx.url_for('/favicon.png'), type='image/png'),
             E.link(rel='stylesheet', type='text/css', href=ctx.url_for('/static', what='mobile.css')),
-            E.link(rel='apple-touch-icon', href=ctx.url_for("/static", what='calibre.png')),
-            E.meta(name="robots", content="noindex")
-        ),  # End head
-        body
-    )  # End html
+            E.link(rel='apple-touch-icon', href=ctx.url_for('/static', what='calibre.png')),
+            E.meta(name='robots', content='noindex'),
+        ),
+        body,
+    )
+
+
 # }}}
 
 
@@ -240,30 +271,47 @@ def mobile(ctx, rd):
         except Exception:
             sort_by = 'date'
             book_ids = db.multisort([(sort_by, ascending)], book_ids)
-        books = [db.get_metadata(book_id) for book_id in book_ids[(start-1):(start-1)+num]]
+        books = [db.get_metadata(book_id) for book_id in book_ids[(start - 1) : (start - 1) + num]]
     rd.outheaders['Last-Modified'] = http_date(timestampfromdt(db.last_modified()))
     order = 'ascending' if ascending else 'descending'
-    q = {b'search':search.encode('utf-8'), b'order':order.encode('ascii'), b'sort':sort_by.encode('utf-8'), b'num':as_bytes(num), 'library_id':library_id}
+    q = {
+        b'search': search.encode('utf-8'),
+        b'order': order.encode('ascii'),
+        b'sort': sort_by.encode('utf-8'),
+        b'num': as_bytes(num),
+        'library_id': library_id,
+    }
     url_base = ctx.url_for('/mobile') + '?' + urlencode(q)
-    lm = {k:v for k, v in iteritems(library_map) if k != library_id}
+    lm = {k: v for k, v in library_map.items() if k != library_id}
     return build_index(rd, books, num, search, sort_by, order, start, total, url_base, db.field_metadata, ctx, lm, library_id)
+
+
 # }}}
 
 
 @endpoint('/browse/{+rest=""}')
 def browse(ctx, rd, rest):
     if rest.startswith('book/'):
+        try:
+            book_id = int(rest[5:])
+        except Exception:
+            raise HTTPRedirect(ctx.url_for(None))
         # implementation of https://bugs.launchpad.net/calibre/+bug/1698411
         # redirect old server book URLs to new URLs
-        redirect = ctx.url_for(None) + '#book_id=' + rest[5:] + "&amp;panel=book_details"
+        redirect = ctx.url_for(None) + f'#book_id={book_id}&amp;panel=book_details'
         from lxml import etree as ET
-        return html(ctx, rd, endpoint,
-                 E.html(E.head(
-                     ET.XML('<meta http-equiv="refresh" content="0;url=' + redirect + '"/>'),
-                     ET.XML('<script language="javascript">' +
-                         'window.location.href = "' + redirect + '"' +
-                         '</script>'
-                         ))))
+
+        return html(
+            ctx,
+            rd,
+            endpoint,
+            E.html(
+                E.head(
+                    ET.XML('<meta http-equiv="refresh" content="0;url=' + redirect + '"/>'),
+                    ET.XML('<script language="javascript">' + 'window.location.href = "' + redirect + '"' + '</script>'),
+                )
+            ),
+        )
     else:
         raise HTTPRedirect(ctx.url_for(None))
 
@@ -277,4 +325,30 @@ def stanza(ctx, rd, rest):
 def legacy_get(ctx, rd, what, book_id, library_id, filename):
     # See https://www.mobileread.com/forums/showthread.php?p=3531644 for why
     # this is needed for Kobo browsers
-    return get(ctx, rd, what, book_id, library_id)
+    ua = rd.inheaders.get('User-Agent', '')
+    is_old_kindle = 'Kindle/3' in ua
+    ans = get(ctx, rd, what, book_id, library_id)
+    if is_old_kindle:
+        # Content-Disposition causes downloads to fail when the filename has non-ascii chars in it
+        # https://www.mobileread.com/forums/showthread.php?t=364015
+        rd.outheaders.pop('Content-Disposition', '')
+    return ans
+
+
+@endpoint('/legacy/book/{book_id}/{library_id}')
+def legacy_book(ctx, rd, book_id, library_id):
+    # Set library_id in query to match get_library_data expectations
+    rd.query['library_id'] = library_id
+    db, library_id, library_map, default_library = get_library_data(ctx, rd)
+    try:
+        book_id = int(book_id)
+    except Exception:
+        raise HTTPRedirect(ctx.url_for('/mobile'))
+    with db.safe_read_lock:
+        if not ctx.has_id(rd, db, book_id):
+            raise BookNotFound(book_id, db)
+        mi = db.get_metadata(book_id, get_cover=False)
+    rd.outheaders['Last-Modified'] = http_date(timestampfromdt(db.last_modified()))
+    html_str = render_legacy_book_details(ctx, rd, mi, library_id)
+    rd.outheaders.set('Content-Type', 'text/html; charset=UTF-8', replace_all=True)
+    return html_str.encode('utf-8')

@@ -1,18 +1,16 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
+import copy
+import os
+import re
+from urllib.parse import urlparse
 
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import copy, os, re
-from polyglot.builtins import string_or_bytes
-
-from calibre.ebooks.oeb.base import barename, XPNSMAP, XPath, OPF, XHTML, OEB_DOCS
+from calibre.ebooks.oeb.base import OEB_DOCS, OPF, XHTML, XPNSMAP, XPath, barename, rewrite_idrefs
 from calibre.ebooks.oeb.polish.errors import MalformedMarkup
-from calibre.ebooks.oeb.polish.toc import node_from_loc
 from calibre.ebooks.oeb.polish.replace import LinkRebaser
-from polyglot.builtins import iteritems
-from polyglot.urllib import urlparse
+from calibre.ebooks.oeb.polish.toc import node_from_loc
+from calibre.utils.localization import _
 
 
 class AbortError(ValueError):
@@ -37,12 +35,7 @@ def adjust_split_point(split_point, log):
     sp = split_point
     while True:
         parent = sp.getparent()
-        if (
-            parent is None or
-            barename(parent.tag) in {'body', 'html'} or
-            (parent.text and parent.text.strip()) or
-            parent.index(sp) > 0
-        ):
+        if parent is None or barename(parent.tag) in {'body', 'html'} or (parent.text and parent.text.strip()) or parent.index(sp) > 0:
             break
         sp = parent
 
@@ -57,25 +50,25 @@ def get_body(root):
 
 
 def do_split(split_point, log, before=True):
-    '''
+    """
     Split tree into a *before* and an *after* tree at ``split_point``.
 
     :param split_point: The Element at which to split
     :param before: If True tree is split before split_point, otherwise after split_point
     :return: before_tree, after_tree
-    '''
+    """
     if before:
         # We cannot adjust for after since moving an after split point to a
         # parent will cause breakage if the parent contains any content
         # after the original split point
         split_point = adjust_split_point(split_point, log)
-    tree         = split_point.getroottree()
-    path         = tree.getpath(split_point)
+    tree = split_point.getroottree()
+    path = tree.getpath(split_point)
 
-    tree, tree2  = copy.deepcopy(tree), copy.deepcopy(tree)
-    root, root2  = tree.getroot(), tree2.getroot()
-    body, body2  = map(get_body, (root, root2))
-    split_point  = root.xpath(path)[0]
+    tree, tree2 = copy.deepcopy(tree), copy.deepcopy(tree)
+    root, root2 = tree.getroot(), tree2.getroot()
+    body, body2 = map(get_body, (root, root2))
+    split_point = root.xpath(path)[0]
     split_point2 = root2.xpath(path)[0]
 
     def nix_element(elem, top=True):
@@ -86,7 +79,7 @@ def do_split(split_point, log, before=True):
             parent.remove(elem)
         else:
             index = parent.index(elem)
-            parent[index:index+1] = list(elem.iterchildren())
+            parent[index : index + 1] = list(elem.iterchildren())
 
     # Tree 1
     hit_split_point = False
@@ -130,7 +123,7 @@ def do_split(split_point, log, before=True):
                     if idx == 0:
                         parent.text = (parent.text or '') + tail
                     else:
-                        sib = parent[idx-1]
+                        sib = parent[idx - 1]
                         sib.tail = (sib.tail or '') + tail
                 # Remove the element itself
                 nix_element(elem)
@@ -149,7 +142,6 @@ def do_split(split_point, log, before=True):
 
 
 class SplitLinkReplacer:
-
     def __init__(self, base, bottom_anchors, top_name, bottom_name, container):
         self.bottom_anchors, self.bottom_name = bottom_anchors, bottom_name
         self.container, self.top_name = container, top_name
@@ -198,8 +190,7 @@ def split(container, name, loc_or_xpath, before=True, totals=None):
             try:
                 split_point = node_from_loc(root, loc_or_xpath, totals=totals)
             except MalformedMarkup:
-                raise MalformedMarkup(_('The file %s has malformed markup. Try running the Fix HTML tool'
-                                        ' before splitting') % name)
+                raise MalformedMarkup(_('The file %s has malformed markup. Try running the Fix HTML tool before splitting') % name)
             container.replace(name, root)
     if in_table(split_point):
         raise AbortError('Cannot split inside tables')
@@ -214,7 +205,7 @@ def split(container, name, loc_or_xpath, before=True, totals=None):
     nname, s = None, 0
     while not nname or container.exists(nname):
         s += 1
-        nname = '%s_split%d.%s' % (base, s, ext)
+        nname = f'{base}_split{s}.{ext}'
     manifest_item = container.generate_item(nname, media_type=container.mime_map[name])
     bottom_name = container.href_to_name(manifest_item.get('href'), container.opf_name)
 
@@ -240,7 +231,7 @@ def split(container, name, loc_or_xpath, before=True, totals=None):
                         a.set('href', '#' + purl.fragment)
 
     # Fix all links in the container that point to anchors in the bottom tree
-    for fname, media_type in iteritems(container.mime_map):
+    for fname, media_type in container.mime_map.items():
         if fname not in {name, bottom_name}:
             repl = SplitLinkReplacer(fname, anchors_in_bottom, name, bottom_name, container)
             container.replace_links(fname, repl)
@@ -263,13 +254,13 @@ def split(container, name, loc_or_xpath, before=True, totals=None):
 
 
 def multisplit(container, name, xpath, before=True):
-    '''
+    """
     Split the specified file at multiple locations (all tags that match the specified XPath expression). See also: :func:`split`.
     Splitting automatically migrates all links and references to the affected
     files.
 
     :param before: If True the splits occur before the identified element otherwise after it.
-    '''
+    """
     root = container.parsed(name)
     nodes = root.xpath(xpath, namespaces=XPNSMAP)
     if not nodes:
@@ -286,7 +277,7 @@ def multisplit(container, name, xpath, before=True):
     current = name
     all_names = [name]
     for i in range(len(nodes)):
-        current = split(container, current, '//*[@calibre-split-point="%d"]' % i, before=before)
+        current = split(container, current, f'//*[@calibre-split-point="{i}"]', before=before)
         all_names.append(current)
 
     for x in all_names:
@@ -298,7 +289,6 @@ def multisplit(container, name, xpath, before=True):
 
 
 class MergeLinkReplacer:
-
     def __init__(self, base, anchor_map, master, container):
         self.container, self.anchor_map = container, anchor_map
         self.master = master
@@ -344,7 +334,7 @@ def unique_anchor(seen_anchors, current):
     ans = current
     while ans in seen_anchors:
         c += 1
-        ans = '%s_%d' % (current, c)
+        ans = f'{current}_{c}'
     return ans
 
 
@@ -370,7 +360,7 @@ def merge_html(container, names, master, insert_page_breaks=False):
     seen_stylesheets = set(all_stylesheets(container, master))
     master_body = p(master).findall('h:body', namespaces=XPNSMAP)[-1]
     master_base = os.path.dirname(master)
-    anchor_map = {n:{} for n in names if n != master}
+    anchor_map = {n: {} for n in names if n != master}
     first_anchor_map = {}
 
     for name in names:
@@ -395,9 +385,9 @@ def merge_html(container, names, master, insert_page_breaks=False):
 
         first_child = ''
         for first_child in children:
-            if not isinstance(first_child, string_or_bytes):
+            if not isinstance(first_child, (str, bytes)):
                 break
-        if isinstance(first_child, string_or_bytes):
+        if isinstance(first_child, (str, bytes)):
             # body contained only text, no tags
             first_child = body.makeelement(XHTML('p'))
             first_child.text, children[0] = children[0], first_child
@@ -431,9 +421,10 @@ def merge_html(container, names, master, insert_page_breaks=False):
             q = a.get('href')[1:]
             if q in amap:
                 a.set('href', '#' + amap[q])
+        rewrite_idrefs(root, lambda eid: amap.get(eid, eid))  # ruff: ignore[function-uses-loop-variable]
 
         for child in children:
-            if isinstance(child, string_or_bytes):
+            if isinstance(child, (str, bytes)):
                 add_text(master_body, child)
             else:
                 master_body.append(copy.deepcopy(child))
@@ -441,7 +432,7 @@ def merge_html(container, names, master, insert_page_breaks=False):
         container.remove_item(name, remove_from_guide=False)
 
     # Fix all links in the container that point to merged files
-    for fname, media_type in iteritems(container.mime_map):
+    for fname, media_type in container.mime_map.items():
         repl = MergeLinkReplacer(fname, anchor_map, master, container)
         container.replace_links(fname, repl)
 
@@ -474,7 +465,7 @@ def merge_css(container, names, master):
 
     # Remove links to merged stylesheets in the html files, replacing with a
     # link to the master sheet
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt in OEB_DOCS:
             removed = False
             root = p(name)
@@ -493,20 +484,20 @@ def merge_css(container, names, master):
 
 
 def merge(container, category, names, master):
-    '''
+    """
     Merge the specified files into a single file, automatically migrating all
     links and references to the affected files. The file must all either be HTML or CSS files.
 
     :param category: Must be either ``'text'`` for HTML files or ``'styles'`` for CSS files
     :param names: The list of files to be merged
     :param master: Which of the merged files is the *master* file, that is, the file that will remain after merging.
-    '''
+    """
     if category not in {'text', 'styles'}:
-        raise AbortError('Cannot merge files of type: %s' % category)
+        raise AbortError(f'Cannot merge files of type: {category}')
     if len(names) < 2:
         raise AbortError('Must specify at least two files to be merged')
     if master not in names:
-        raise AbortError('The master file (%s) must be one of the files being merged' % master)
+        raise AbortError(f'The master file ({master}) must be one of the files being merged')
 
     if category == 'text':
         merge_html(container, names, master)

@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2019, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import os
 import sys
-from qt.core import (
-    QApplication, QByteArray, QMarginsF, QPageLayout, QPageSize, Qt, QTimer, QUrl
-)
+
+from qt.core import QApplication, QByteArray, QMarginsF, QPageLayout, QPageSize, Qt, QTimer, QUrl
 from qt.webengine import (
-    QWebEnginePage, QWebEngineProfile, QWebEngineScript,
-    QWebEngineUrlRequestInterceptor, QWebEngineUrlRequestJob,
-    QWebEngineUrlSchemeHandler
+    QWebEnginePage,
+    QWebEngineProfile,
+    QWebEngineScript,
+    QWebEngineUrlRequestInterceptor,
+    QWebEngineUrlRequestJob,
+    QWebEngineUrlSchemeHandler,
 )
 
 from calibre.constants import FAKE_HOST, FAKE_PROTOCOL
@@ -21,69 +22,64 @@ from calibre.gui_launch import setup_qt_logging
 from calibre.utils.filenames import atomic_rename
 from calibre.utils.logging import default_log
 from calibre.utils.monotonic import monotonic
-from calibre.utils.webengine import (
-    secure_webengine, send_reply, setup_fake_protocol, setup_profile
-)
+from calibre.utils.webengine import secure_webengine, send_reply, setup_fake_protocol, setup_profile
 
 LOAD_TIMEOUT = 20
 PRINT_TIMEOUT = 10
 
 
 class RequestInterceptor(QWebEngineUrlRequestInterceptor):
-
-    def interceptRequest(self, request_info):
-        method = bytes(request_info.requestMethod())
+    def interceptRequest(self, info):
+        method = bytes(info.requestMethod())
         if method not in (b'GET', b'HEAD'):
             default_log.warn(f'Blocking URL request with method: {method}')
-            request_info.block(True)
+            info.block(True)
             return
-        qurl = request_info.requestUrl()
-        if qurl.scheme() not in (FAKE_PROTOCOL,):
+        qurl = info.requestUrl()
+        if qurl.scheme() != FAKE_PROTOCOL:
             default_log.warn(f'Blocking URL request {qurl.toString()} as it is not for a resource related to the HTML file being rendered')
-            request_info.block(True)
+            info.block(True)
             return
 
 
 class UrlSchemeHandler(QWebEngineUrlSchemeHandler):
-
     def __init__(self, root, parent=None):
         self.root = root
         super().__init__(parent)
         self.allowed_hosts = (FAKE_HOST,)
 
-    def requestStarted(self, rq):
-        if bytes(rq.requestMethod()) != b'GET':
-            return self.fail_request(rq, QWebEngineUrlRequestJob.Error.RequestDenied)
-        url = rq.requestUrl()
+    def requestStarted(self, a0):
+        if bytes(a0.requestMethod()) != b'GET':
+            return self.fail_request(a0, QWebEngineUrlRequestJob.Error.RequestDenied)
+        url = a0.requestUrl()
         host = url.host()
         if host not in self.allowed_hosts or url.scheme() != FAKE_PROTOCOL:
-            return self.fail_request(rq)
+            return self.fail_request(a0)
         path = url.path()
         rp = path[1:]
         if not rp:
-            return self.fail_request(rq, QWebEngineUrlRequestJob.Error.UrlNotFound)
+            return self.fail_request(a0, QWebEngineUrlRequestJob.Error.UrlNotFound)
         resolved_path = os.path.abspath(os.path.join(self.root, rp.replace('/', os.sep)))
         if not resolved_path.startswith(self.root):
-            return self.fail_request(rq, QWebEngineUrlRequestJob.Error.UrlNotFound)
+            return self.fail_request(a0, QWebEngineUrlRequestJob.Error.UrlNotFound)
 
         try:
             with open(resolved_path, 'rb') as f:
                 data = f.read()
         except OSError as err:
             default_log(f'Failed to read file: {rp} with error: {err}')
-            return self.fail_request(rq, QWebEngineUrlRequestJob.Error.RequestFailed)
+            return self.fail_request(a0, QWebEngineUrlRequestJob.Error.RequestFailed)
 
-        send_reply(rq, guess_type(os.path.basename(resolved_path)), data)
+        send_reply(a0, guess_type(os.path.basename(resolved_path)), data)
 
     def fail_request(self, rq, fail_code=None):
         if fail_code is None:
             fail_code = QWebEngineUrlRequestJob.Error.UrlNotFound
         rq.fail(fail_code)
-        print(f"Blocking FAKE_PROTOCOL request: {rq.requestUrl().toString()} with code: {fail_code}", file=sys.stderr)
+        print(f'Blocking FAKE_PROTOCOL request: {rq.requestUrl().toString()} with code: {fail_code}', file=sys.stderr)
 
 
 class Render(QWebEnginePage):
-
     def __init__(self, profile):
         QWebEnginePage.__init__(self, profile, QApplication.instance())
         secure_webengine(self)
@@ -101,7 +97,8 @@ class Render(QWebEnginePage):
 
     def load_finished(self, ok):
         if ok:
-            self.runJavaScript('''
+            self.runJavaScript(
+                '''
             var ans = {};
             var meta = document.querySelector('meta[name=calibre-html-render-data]');
             if (meta) {
@@ -111,12 +108,17 @@ class Render(QWebEnginePage):
                 } catch {}
             }
             ans;
-            ''', QWebEngineScript.ScriptWorldId.ApplicationWorld, self.start_print)
+            ''',
+                QWebEngineScript.ScriptWorldId.ApplicationWorld,
+                self.start_print,
+            )
         else:
             self.hang_timer.stop()
-            QApplication.instance().exit(1)
+            app = QApplication.instance()
+            assert app is not None
+            app.exit(1)
 
-    def javaScriptConsoleMessage(self, level, msg, linenumber, source_id):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
         pass
 
     def start_load(self, path_to_html, root):
@@ -127,14 +129,15 @@ class Render(QWebEnginePage):
         self.hang_timer.start()
 
     def hang_check(self):
+        app = QApplication.instance()
+        assert app is not None
         if self.printing_started:
             if monotonic() - self.start_time > PRINT_TIMEOUT:
                 self.hang_timer.stop()
-                QApplication.instance().exit(4)
-        else:
-            if monotonic() - self.start_time > LOAD_TIMEOUT:
-                self.hang_timer.stop()
-                QApplication.instance().exit(3)
+                app.exit(4)
+        elif monotonic() - self.start_time > LOAD_TIMEOUT:
+            self.hang_timer.stop()
+            app.exit(3)
 
     def start_print(self, data):
         margins = QMarginsF(0, 0, 0, 0)
@@ -145,12 +148,11 @@ class Render(QWebEnginePage):
                     margins = QMarginsF(*data['margins'])
                 if 'size' in data:
                     sz = data['size']
-                    if type(getattr(QPageSize, sz, None)) is type(QPageSize.PageSizeId.A4):  # noqa
+                    if type(getattr(QPageSize, sz, None)) is type(QPageSize.PageSizeId.A4):
                         page_size = QPageSize(getattr(QPageSize, sz))
                     else:
-                        from calibre.ebooks.pdf.image_writer import (
-                            parse_pdf_page_size
-                        )
+                        from calibre.ebooks.pdf.image_writer import parse_pdf_page_size
+
                         ps = parse_pdf_page_size(sz, data.get('unit', 'inch'))
                         if ps is not None:
                             page_size = ps
@@ -162,7 +164,9 @@ class Render(QWebEnginePage):
         self.start_time = monotonic()
 
     def print_finished(self, path, ok):
-        QApplication.instance().exit(0 if ok else 2)
+        app = QApplication.instance()
+        assert app is not None
+        app.exit(0 if ok else 2)
         self.hang_timer.stop()
 
 
@@ -182,7 +186,9 @@ def main(path_to_html, tdir, image_format='jpeg', root=''):
     os.chdir(tdir)
     renderer = Render(profile)
     renderer.start_load(path_to_html, url_handler.root)
-    ret = QApplication.instance().exec()
+    app = QApplication.instance()
+    assert app is not None
+    ret = app.exec()
     renderer.break_cycles()
     del renderer
     if ret == 0:

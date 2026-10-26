@@ -1,8 +1,6 @@
-__license__ = 'GPL v3'
-__copyright__ = '2022, Vaso Peras-Likodric <vaso at vipl.in.rs>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2022, Vaso Peras-Likodric <vaso at vipl.in.rs>
 
-from typing import Optional
+from typing import ClassVar
 
 from calibre.devices.kindle.apnx_page_generator.generators.fast_page_generator import FastPageGenerator
 from calibre.devices.kindle.apnx_page_generator.i_page_generator import IPageGenerator, mobi_html_length
@@ -10,21 +8,21 @@ from calibre.devices.kindle.apnx_page_generator.pages import Pages
 
 
 class ExactPageGenerator(IPageGenerator):
-
-    instance = None
+    instance: ClassVar[ExactPageGenerator]
 
     def name(self) -> str:
-        return "exact"
+        return 'exact'
 
-    def _generate_fallback(self, mobi_file_path: str, real_count: Optional[int]) -> Pages:
+    def _generate_fallback(self, mobi_file_path: str, real_count: int | None) -> Pages:
         return FastPageGenerator.instance.generate(mobi_file_path, real_count)
 
-    def _generate(self, mobi_file_path: str, real_count: Optional[int]) -> Pages:
+    def _generate(self, mobi_file_path: str, real_count: int | None) -> Pages:
         """
         Given a specified page count (such as from a custom column),
         create our array of pages for the apnx file by dividing by
         the content size of the book.
         """
+        assert real_count is not None
         pages = []
         count = 0
 

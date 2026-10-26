@@ -1,54 +1,49 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-
-import time, io
+import io
+import time
 from itertools import count
+from queue import Empty, Queue
 
 from calibre import prints
 from calibre.constants import DEBUG
-from polyglot.queue import Queue, Empty
+from calibre.utils.localization import _
 from polyglot.builtins import cmp
-
 
 job_counter = count()
 
 
 class BaseJob:
-
-    WAITING  = 0
-    RUNNING  = 1
+    WAITING = 0
+    RUNNING = 1
     FINISHED = 2
 
     def __init__(self, description, done=lambda x: x):
-        self.id            = next(job_counter)
-        self.description   = description
-        self.done          = done
-        self.done2         = None
-        self.killed        = False
-        self.failed        = False
+        self.id = next(job_counter)
+        self.description = description
+        self.done = done
+        self.done2 = None
+        self.killed = False
+        self.failed = False
         self.kill_on_start = False
-        self.start_time    = None
-        self.result        = None
-        self.duration      = None
-        self.log_path      = None
+        self.start_time = None
+        self.result = None
+        self.duration = None
+        self.log_path = None
         self.notifications = Queue()
 
-        self._run_state    = self.WAITING
-        self.percent       = 0
-        self._message      = None
-        self._status_text  = _('Waiting...')
-        self._done_called  = False
-        self.core_usage    = 1
-        self.timed_out     = False
+        self._run_state = self.WAITING
+        self.percent = 0
+        self._message = None
+        self._status_text = _('Waiting...')
+        self._done_called = False
+        self.core_usage = 1
+        self.timed_out = False
 
     def update(self, consume_notifications=True):
         if self.duration is not None:
-            self._run_state   = self.FINISHED
+            self._run_state = self.FINISHED
             self.percent = 100
             if self.killed:
                 if self.timed_out:
@@ -61,18 +56,18 @@ class BaseJob:
                 try:
                     prints('Job:', self.id, self.description, 'finished')
                     prints('\t'.join(self.details.splitlines(True)))
-                except:
+                except Exception:
                     pass
             if not self._done_called:
                 self._done_called = True
                 try:
                     self.done(self)
-                except:
+                except Exception:
                     pass
                 try:
                     if callable(self.done2):
                         self.done2(self)
-                except:
+                except Exception:
                     pass
         elif self.start_time is not None:
             self._run_state = self.RUNNING
@@ -87,7 +82,7 @@ class BaseJob:
         while self.notifications is not None:
             try:
                 self.percent, self._message = self.notifications.get_nowait()
-                self.percent *= 100.
+                self.percent *= 100.0
                 got_notification = True
             except Empty:
                 break
@@ -161,8 +156,7 @@ class BaseJob:
     def log_file(self):
         if self.log_path:
             return open(self.log_path, 'rb')
-        return io.BytesIO(_('No details available.').encode('utf-8',
-            'replace'))
+        return io.BytesIO(_('No details available.').encode('utf-8', 'replace'))
 
     @property
     def details(self):
@@ -170,7 +164,10 @@ class BaseJob:
 
 
 class ParallelJob(BaseJob):
-
-    def __init__(self, name, description, done, args=[], kwargs={}):
+    def __init__(self, name, description, done, args=None, kwargs=None):
+        if kwargs is None:
+            kwargs = {}
+        if args is None:
+            args = []
         self.name, self.args, self.kwargs = name, args, kwargs
         BaseJob.__init__(self, description, done)

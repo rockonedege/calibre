@@ -1,24 +1,19 @@
-__license__ = 'GPL 3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
 import os
 import struct
-import zlib
+from compression import zlib
 
 from calibre import CurrentDir
-from calibre.ebooks.rb import HEADER
-from calibre.ebooks.rb import RocketBookError
-from calibre.ebooks.metadata.rb import get_metadata
 from calibre.ebooks.metadata.opf2 import OPFCreator
+from calibre.ebooks.metadata.rb import get_metadata
+from calibre.ebooks.rb import HEADER, RocketBookError
 from polyglot.builtins import as_unicode
 from polyglot.urllib import unquote
 
 
 class RBToc(list):
-
     class Item:
-
         def __init__(self, name='', size=0, offset=0, flags=0):
             self.name = name
             self.size = size
@@ -27,7 +22,6 @@ class RBToc(list):
 
 
 class Reader:
-
     def __init__(self, stream, log, encoding=None):
         self.stream = stream
         self.log = log
@@ -44,7 +38,7 @@ class Reader:
     def verify_file(self):
         self.stream.seek(0)
         if self.stream.read(14) != HEADER:
-            raise RocketBookError('Could not read file: %s. Does not contain a valid RocketBook Header.' % self.stream.name)
+            raise RocketBookError(f'Could not read file: {self.stream.name}. Does not contain a valid RocketBook Header.')
 
         self.stream.seek(28)
         size = self.read_i32()
@@ -68,6 +62,15 @@ class Reader:
 
         return toc
 
+    def get_safe_path(self, output_dir, name):
+        base = os.path.abspath(output_dir)
+        if not base.endswith(os.sep):
+            base += os.sep
+        ans = os.path.abspath(os.path.join(base, name))
+        if not ans.startswith(base):
+            ans = ''
+        return ans
+
     def get_text(self, toc_item, output_dir):
         if toc_item.flags in (1, 2):
             return
@@ -88,8 +91,9 @@ class Reader:
         else:
             output += self.stream.read(toc_item.size).decode('cp1252' if self.encoding is None else self.encoding, 'replace')
 
-        with open(os.path.join(output_dir, toc_item.name.decode('utf-8')), 'wb') as html:
-            html.write(output.replace('<TITLE>', '<TITLE> ').encode('utf-8'))
+        if path := self.get_safe_path(output_dir, toc_item.name.decode('utf-8')):
+            with open(path, 'wb') as html:
+                html.write(output.replace('<TITLE>', '<TITLE> ').encode('utf-8'))
 
     def get_image(self, toc_item, output_dir):
         if toc_item.flags != 0:
@@ -98,8 +102,9 @@ class Reader:
         self.stream.seek(toc_item.offset)
         data = self.stream.read(toc_item.size)
 
-        with open(os.path.join(output_dir, toc_item.name.decode('utf-8')), 'wb') as img:
-            img.write(data)
+        if path := self.get_safe_path(output_dir, toc_item.name.decode('utf-8')):
+            with open(path, 'wb') as img:
+                img.write(data)
 
     def extract_content(self, output_dir):
         self.log.debug('Extracting content from file...')
@@ -109,11 +114,11 @@ class Reader:
         for item in self.toc:
             iname = as_unicode(item.name)
             if iname.lower().endswith('html'):
-                self.log.debug('HTML item %s found...' % iname)
+                self.log.debug(f'HTML item {iname} found...')
                 html.append(iname)
                 self.get_text(item, output_dir)
             if iname.lower().endswith('png'):
-                self.log.debug('PNG item %s found...' % iname)
+                self.log.debug(f'PNG item {iname} found...')
                 images.append(iname)
                 self.get_image(item, output_dir)
 
@@ -126,7 +131,7 @@ class Reader:
             opf = OPFCreator(output_dir, self.mi)
 
             manifest = []
-            for page in pages+images:
+            for page in pages + images:
                 manifest.append((page, None))
 
             opf.create_manifest(manifest)

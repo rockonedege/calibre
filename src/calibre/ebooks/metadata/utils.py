@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-from collections import namedtuple
+from typing import NamedTuple
 
 from calibre.ebooks.chardet import xml_to_unicode
 from calibre.ebooks.oeb.base import OPF
@@ -11,7 +11,11 @@ from calibre.utils.cleantext import clean_xml_chars
 from calibre.utils.localization import lang_as_iso639_1
 from calibre.utils.xml_parse import safe_xml_fromstring
 
-OPFVersion = namedtuple('OPFVersion', 'major minor patch')
+
+class OPFVersion(NamedTuple):
+    major: int
+    minor: int
+    patch: int
 
 
 def parse_opf_version(raw):
@@ -32,13 +36,18 @@ def parse_opf_version(raw):
 
 def parse_opf(stream_or_path):
     stream = stream_or_path
-    if not hasattr(stream, 'read'):
+    needs_close = not hasattr(stream, 'read')
+    if needs_close:
         stream = open(stream, 'rb')
-    raw = stream.read()
+    try:
+        raw = stream.read()
+    finally:
+        if needs_close:
+            stream.close()
     if not raw:
-        raise ValueError('Empty file: '+getattr(stream, 'name', 'stream'))
+        raise ValueError('Empty file: ' + getattr(stream, 'name', 'stream'))
     raw, encoding = xml_to_unicode(raw, strip_encoding_pats=True, resolve_entities=True, assume_utf8=True)
-    raw = raw[raw.find('<'):]
+    raw = raw[raw.find('<') :]
     root = safe_xml_fromstring(clean_xml_chars(raw))
     if root is None:
         raise ValueError('Not an OPF file')
@@ -46,14 +55,16 @@ def parse_opf(stream_or_path):
 
 
 def normalize_languages(opf_languages, mi_languages):
-    ' Preserve original country codes and use 2-letter lang codes where possible '
+    "Preserve original country codes and use 2-letter lang codes where possible"
+
     def parse(x):
         try:
             return parse_lang_code(x)
         except ValueError:
             return None
+
     opf_languages = filter(None, map(parse, opf_languages))
-    cc_map = {c.langcode:c.countrycode for c in opf_languages}
+    cc_map = {c.langcode: c.countrycode for c in opf_languages}
     mi_languages = filter(None, map(parse, mi_languages))
 
     def norm(x):
@@ -63,6 +74,7 @@ def normalize_languages(opf_languages, mi_languages):
         if cc:
             lc += '-' + cc
         return lc
+
     return list(map(norm, mi_languages))
 
 
@@ -76,7 +88,7 @@ def ensure_unique(template, existing):
     c = 0
     while q in existing:
         c += 1
-        q = '%s-%d%s' % (b, c, e)
+        q = f'{b}-{c}{e}'
     return q
 
 
@@ -96,5 +108,6 @@ def create_manifest_item(root, href_template, id_template, media_type=None):
 
 def pretty_print_opf(root):
     from calibre.ebooks.oeb.polish.pretty import pretty_opf, pretty_xml_tree
+
     pretty_opf(root)
     pretty_xml_tree(root)

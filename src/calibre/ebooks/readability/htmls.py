@@ -1,16 +1,15 @@
 import re
 
 from lxml.html import tostring
-import lxml.html
 
-from calibre.ebooks.readability.cleaners import normalize_spaces, clean_attributes
 from calibre.ebooks.chardet import xml_to_unicode
-from polyglot.builtins import iteritems
+from calibre.ebooks.readability.cleaners import clean_attributes, normalize_spaces
+from calibre.utils.xml_parse import document_fromstring
 
 
 def build_doc(page):
     page_unicode = xml_to_unicode(page, strip_encoding_pats=True)[0]
-    doc = lxml.html.document_fromstring(page_unicode)
+    doc = document_fromstring(page_unicode)
     return doc
 
 
@@ -20,16 +19,16 @@ def js_re(src, pattern, flags, repl):
 
 def normalize_entities(cur_title):
     entities = {
-        '\u2014':'-',
-        '\u2013':'-',
+        '\u2014': '-',
+        '\u2013': '-',
         '&mdash;': '-',
         '&ndash;': '-',
-        '\u00A0': ' ',
-        '\u00AB': '"',
-        '\u00BB': '"',
+        '\u00a0': ' ',
+        '\u00ab': '"',
+        '\u00bb': '"',
         '&quot;': '"',
     }
-    for c, r in iteritems(entities):
+    for c, r in entities.items():
         if c in cur_title:
             cur_title = cur_title.replace(c, r)
 
@@ -75,16 +74,16 @@ def shorten_title(doc):
                 add_match(candidates, e.text_content(), orig)
 
     for item in [
-            "descendant-or-self::*[@id = 'title']",
-            "descendant-or-self::*[@id = 'head']",
-            "descendant-or-self::*[@id = 'heading']",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' pageTitle ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' news_title ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' title ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' head ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' heading ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' contentheading ')]",
-            "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' small_header_red ')]"
+        "descendant-or-self::*[@id = 'title']",
+        "descendant-or-self::*[@id = 'head']",
+        "descendant-or-self::*[@id = 'heading']",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' pageTitle ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' news_title ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' title ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' head ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' heading ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' contentheading ')]",
+        "descendant-or-self::*[@class and contains(concat(' ', normalize-space(@class), ' '), ' small_header_red ')]",
     ]:
         for e in doc.xpath(item):
             if e.text:
@@ -93,7 +92,7 @@ def shorten_title(doc):
                 add_match(candidates, e.text_content(), orig)
 
     if candidates:
-        title = sorted(candidates, key=len)[-1]
+        title = max(candidates, key=len)
     else:
         for delimiter in [' | ', ' - ', ' :: ', ' / ']:
             if delimiter in title:

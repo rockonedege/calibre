@@ -1,8 +1,6 @@
-__license__ = 'GPL v3'
-__copyright__ = '2022, Vaso Peras-Likodric <vaso at vipl.in.rs>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2022, Vaso Peras-Likodric <vaso at vipl.in.rs>
 
-from typing import Optional
+from typing import ClassVar
 
 from calibre.devices.kindle.apnx_page_generator.generators.fast_page_generator import FastPageGenerator
 from calibre.devices.kindle.apnx_page_generator.i_page_generator import IPageGenerator, mobi_html
@@ -10,17 +8,16 @@ from calibre.devices.kindle.apnx_page_generator.pages import Pages
 
 
 class AccuratePageGenerator(IPageGenerator):
-
-    instance = None
+    instance: ClassVar[AccuratePageGenerator]
 
     def name(self) -> str:
-        return "accurate"
+        return 'accurate'
 
-    def _generate_fallback(self, mobi_file_path: str, real_count: Optional[int]) -> Pages:
+    def _generate_fallback(self, mobi_file_path: str, real_count: int | None) -> Pages:
         return FastPageGenerator.instance.generate(mobi_file_path, real_count)
 
-    def _generate(self, mobi_file_path: str, real_count: Optional[int]) -> Pages:
-        """
+    def _generate(self, mobi_file_path: str, real_count: int | None) -> Pages:
+        '''
         A more accurate but much more resource intensive and slower
         method to calculate the page length.
 
@@ -36,7 +33,7 @@ class AccuratePageGenerator(IPageGenerator):
         This can be make more accurate by accounting for
         <div class="mbp_pagebreak" /> as a new page marker.
         And <br> elements as an empty line.
-        """
+        '''
         pages = []
 
         html = mobi_html(mobi_file_path)

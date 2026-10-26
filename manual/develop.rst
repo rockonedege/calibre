@@ -22,7 +22,7 @@ bugs in calibre very easy, resulting in a frenetic pace of development. Because 
 comprehensive command line interface for all its functions, documented in :doc:`generated/en/cli-index`.
 
 The modular design of calibre is expressed via ``Plugins``. There is a :ref:`tutorial <customize>` on writing calibre plugins.
-For example, adding support for a new device to calibre typically involves writing less than a 100 lines of code in the form of
+For example, adding support for a new device to calibre typically involves writing fewer than 100 lines of code in the form of
 a device driver plugin. You can browse the
 `built-in drivers <https://github.com/kovidgoyal/calibre/tree/master/src/calibre/devices>`_. Similarly, adding support
 for new conversion formats involves writing input/output format plugins. Another example of the modular design is the :ref:`recipe system <news>` for
@@ -33,7 +33,7 @@ fetching news. For more examples of plugins designed to add features to calibre,
 Code layout
 ^^^^^^^^^^^^^^
 
-All the calibre python code is in the ``calibre`` package. This package contains the following main sub-packages
+All the calibre Python code is in the ``calibre`` package. This package contains the following main sub-packages
 
     * devices - All the device drivers. Just look through some of the built-in drivers to get an idea for how they work.
 
@@ -81,7 +81,7 @@ calibre uses `Git <https://www.git-scm.com/>`_, a distributed version control
 system. Git is available on all the platforms calibre supports.  After
 installing Git, you can get the calibre source code with the command::
 
-    git clone git://github.com/kovidgoyal/calibre.git
+    git clone https://github.com/kovidgoyal/calibre.git
 
 On Windows you will need the complete path name, that will be something like :file:`C:\\Program Files\\Git\\git.exe`.
 
@@ -179,7 +179,7 @@ Setting this environment variable means that calibre will now load all its Pytho
 That's it! You are now ready to start hacking on the calibre code. For example, open the file :file:`src\\calibre\\__init__.py`
 in your favorite editor and add the line::
 
-    print ("Hello, world!")
+    print("Hello, world!")
 
 near the top of the file. Now run the command :command:`calibredb`. The very first line of output should be ``Hello, world!``.
 
@@ -248,6 +248,9 @@ your Linux distribution and what shell you are using.
     It is recommended to use the binary installer provided from upstream.
     Should you insist on using a package provided by your distribution, use
     the ``CALIBRE_PYTHON_PATH`` and ``CALIBRE_RESOURCES_PATH`` variables instead.
+    You can get these by running ``calibre-debug --paths``. But note that
+    distribution calibre packages are often terminally broken and are completely
+    unsupported.
 
 Once you have set the environment variable, open a new terminal and check that it was correctly set by using
 the command::
@@ -259,7 +262,7 @@ Setting this environment variable means that calibre will now load all its Pytho
 That's it! You are now ready to start hacking on the calibre code. For example, open the file :file:`src/calibre/__init__.py`
 in your favorite editor and add the line::
 
-    print ("Hello, world!")
+    print("Hello, world!")
 
 near the top of the file. Now run the command :command:`calibredb`. The very first line of output should be ``Hello, world!``.
 
@@ -302,9 +305,9 @@ Similarly, you can start the E-book viewer as::
 
     calibre-debug -w /path/to/file/to/be/viewed
 
-The e-book-editor can be started as::
+The e-book editor can be started as::
 
-    calibre-debug -t /path/to/be/edited
+    calibre-debug --edit-book /path/to/be/edited
 
 Using an interactive Python interpreter
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -385,6 +388,14 @@ that the calibre environment is fully initialized, so you can use all the calibr
 The ``--`` causes all subsequent arguments to be passed to your script.
 
 
+Running the calibre test suite
+------------------------------------
+
+The calibre test suite can be run by::
+
+    calibre-debug -t all
+
+
 Using calibre in your projects
 ----------------------------------------
 
@@ -406,7 +417,7 @@ you can also directly import calibre, as follows::
     import init_calibre
     import calibre
 
-    print calibre.__version__
+    print(calibre.__version__)
 
 It is essential that you import the init_calibre module before any other calibre modules/packages as
 it sets up the interpreter to run calibre code.

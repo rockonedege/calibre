@@ -1,38 +1,40 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 from io import BytesIO
+
 from PIL import Image
 
 from calibre import as_unicode
-from calibre.ebooks.oeb.polish.check.base import BaseError, WARN
+from calibre.ebooks.oeb.polish.check.base import WARN, BaseError
 from calibre.ebooks.oeb.polish.check.parsing import EmptyFile
+from calibre.utils.localization import _
 from polyglot.builtins import error_message
 
 
 class InvalidImage(BaseError):
-
-    HELP = _('An invalid image is an image that could not be loaded, typically because'
-             ' it is corrupted. You should replace it with a good image or remove it.')
+    RULE_NAME = _('Invalid image')
+    HELP = _('An invalid image is an image that could not be loaded, typically because it is corrupted. You should replace it with a good image or remove it.')
 
     def __init__(self, msg, *args, **kwargs):
         BaseError.__init__(self, 'Invalid image: ' + msg, *args, **kwargs)
 
 
 class CMYKImage(BaseError):
-
-    HELP = _('Reader devices based on Adobe Digital Editions cannot display images whose'
-             ' colors are specified in the CMYK colorspace. You should convert this image'
-             ' to the RGB colorspace, for maximum compatibility.')
+    HELP = _(
+        'Reader devices based on Adobe Digital Editions cannot display images whose'
+        ' colors are specified in the CMYK colorspace. You should convert this image'
+        ' to the RGB colorspace, for maximum compatibility.'
+    )
     INDIVIDUAL_FIX = _('Convert image to RGB automatically')
     level = WARN
 
     def __call__(self, container):
         from qt.core import QImage
+
         from calibre.gui2 import pixmap_to_data
+        from calibre_extensions.imageops import load_from_data_without_gil
+
         ext = container.mime_map[self.name].split('/')[-1].upper()
         if ext == 'JPG':
             ext = 'JPEG'
@@ -41,7 +43,7 @@ class CMYKImage(BaseError):
         with container.open(self.name, 'r+b') as f:
             raw = f.read()
             i = QImage()
-            i.loadFromData(raw)
+            load_from_data_without_gil(i, raw)
             if i.isNull():
                 return False
             raw = pixmap_to_data(i, format=ext, quality=95)

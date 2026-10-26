@@ -2,7 +2,8 @@ name: Transifex
 on:
   push:
     branches: [master, ]
-
+permissions:
+    contents: read # to fetch code (actions/checkout)
 
 jobs:
     Push-To-Transifex:
@@ -20,9 +21,10 @@ jobs:
                 pacman -S --noconfirm tar
 
             - name: Checkout source code
-              uses: actions/checkout@master
+              uses: actions/checkout@v7.0.1
               with:
                 fetch-depth: 2
+                persist-credentials: false
 
             - name: Install calibre dependencies
               run: setup/arch-ci.sh

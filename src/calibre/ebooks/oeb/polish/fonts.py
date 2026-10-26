@@ -1,14 +1,11 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2014, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
+from tinycss.fonts3 import parse_font, parse_font_family, serialize_font, serialize_font_family
 
 from calibre.ebooks.oeb.base import css_text
-from calibre.ebooks.oeb.polish.container import OEB_STYLES, OEB_DOCS
 from calibre.ebooks.oeb.normalize_css import normalize_font
-from tinycss.fonts3 import parse_font_family, parse_font, serialize_font_family, serialize_font
-from polyglot.builtins import iteritems
+from calibre.ebooks.oeb.polish.container import OEB_DOCS, OEB_STYLES
 
 
 def unquote(x):
@@ -45,7 +42,7 @@ def font_family_data_from_sheet(sheet, families):
 
 def font_family_data(container):
     families = {}
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         if mt in OEB_STYLES:
             sheet = container.parsed(name)
             font_family_data_from_sheet(sheet, families)
@@ -111,7 +108,7 @@ def change_font_in_sheet(container, sheet, old_name, new_name, sheet_name):
         elif rule.type == rule.FONT_FACE_RULE:
             ff = rule.style.getProperty('font-family')
             if ff is not None:
-                families = {x for x in parse_font_family(css_text(ff.propertyValue))}
+                families = set(parse_font_family(css_text(ff.propertyValue)))
                 if old_name in families:
                     changed = True
                     removals.append(rule)
@@ -121,14 +118,14 @@ def change_font_in_sheet(container, sheet, old_name, new_name, sheet_name):
 
 
 def change_font(container, old_name, new_name=None):
-    '''
+    """
     Change a font family from old_name to new_name. Changes all occurrences of
     the font family in stylesheets, style tags and style attributes.
     If the old_name refers to an embedded font, it is removed. You can set
     new_name to None to remove the font family instead of changing it.
-    '''
+    """
     changed = False
-    for name, mt in tuple(iteritems(container.mime_map)):
+    for name, mt in tuple(container.mime_map.items()):
         if mt in OEB_STYLES:
             sheet = container.parsed(name)
             if change_font_in_sheet(container, sheet, old_name, new_name, name):

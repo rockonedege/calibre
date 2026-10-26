@@ -1,63 +1,22 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
+
 """
 Provides platform independent temporary files that persist even after
 being closed.
 """
-import tempfile, os, atexit
 
-from calibre.constants import (__version__, __appname__, filesystem_encoding,
-        iswindows, get_windows_temp_path, ismacos)
+import os
+import tempfile
+from collections.abc import Buffer, Generator, Iterable, Iterator
+from contextlib import contextmanager
+from typing import IO
 
+from calibre.constants import __appname__, filesystem_encoding, get_windows_temp_path, ismacos, iswindows
+from calibre.utils.safe_atexit import remove_dir, remove_file_atexit, remove_folder_atexit, unlink
 
-def cleanup(path):
-    try:
-        import os as oss
-        if oss.path.exists(path):
-            oss.remove(path)
-    except:
-        pass
-
-
-_base_dir = None
-
-
-def remove_dir(x):
-    try:
-        import shutil
-        shutil.rmtree(x, ignore_errors=True)
-    except:
-        pass
-
-
-def determined_remove_dir(x):
-    for i in range(10):
-        try:
-            import shutil
-            shutil.rmtree(x)
-            return
-        except:
-            import os  # noqa
-            if os.path.exists(x):
-                # In case some other program has one of the temp files open.
-                import time
-                time.sleep(0.1)
-            else:
-                return
-    try:
-        import shutil
-        shutil.rmtree(x, ignore_errors=True)
-    except:
-        pass
-
-
-def app_prefix(prefix):
-    if iswindows:
-        return '%s_'%__appname__
-    return '%s_%s_%s'%(__appname__, __version__, prefix)
-
-
-_osx_cache_dir = None
+_base_dir = _osx_cache_dir = None
+_prevent_recursion = False
+cleanup = unlink  # some plugins import this function
 
 
 def osx_cache_dir():
@@ -67,6 +26,7 @@ def osx_cache_dir():
     if _osx_cache_dir is None:
         _osx_cache_dir = False
         import ctypes
+
         libc = ctypes.CDLL(None)
         buf = ctypes.create_string_buffer(512)
         l = libc.confstr(65538, ctypes.byref(buf), len(buf))  # _CS_DARWIN_USER_CACHE_DIR = 65538
@@ -80,17 +40,24 @@ def osx_cache_dir():
                 return q
 
 
+get_default_tempdir = tempfile.gettempdir
+
+
 def base_dir():
-    global _base_dir
+    global _base_dir, _prevent_recursion
     if _base_dir is not None and not os.path.exists(_base_dir):
         # Some people seem to think that running temp file cleaners that
         # delete the temp dirs of running programs is a good idea!
-        _base_dir = None
+        if _prevent_recursion:
+            _base_dir = get_default_tempdir()
+        else:
+            _base_dir = None
     if _base_dir is None:
         td = os.environ.get('CALIBRE_WORKER_TEMP_DIR', None)
         if td is not None:
             from calibre.utils.serialize import msgpack_loads
             from polyglot.binary import from_hex_bytes
+
             try:
                 td = msgpack_loads(from_hex_bytes(td))
             except Exception:
@@ -101,7 +68,7 @@ def base_dir():
             base = os.environ.get('CALIBRE_TEMP_DIR', None)
             if base is not None and iswindows:
                 base = os.getenv('CALIBRE_TEMP_DIR')
-            prefix = app_prefix('tmp_')
+            prefix = f'{__appname__}-'
             if base is None:
                 if iswindows:
                     # On windows, if the TMP env var points to a path that
@@ -118,23 +85,40 @@ def base_dir():
                     # https://developer.apple.com/library/mac/documentation/Darwin/Reference/ManPages/man3/confstr.3.html
                     base = osx_cache_dir()
 
-            _base_dir = tempfile.mkdtemp(prefix=prefix, dir=base)
-            atexit.register(determined_remove_dir if iswindows else remove_dir, _base_dir)
-
-        try:
-            tempfile.gettempdir()
-        except Exception:
-            # Widows temp vars set to a path not encodable in mbcs
-            # Use our temp dir
-            tempfile.tempdir = _base_dir
+            _base_dir = tempfile.mkdtemp(prefix=prefix, dir=base or get_default_tempdir())
+            orig = _prevent_recursion
+            _prevent_recursion = True
+            try:
+                remove_folder_atexit(_base_dir)
+            finally:
+                _prevent_recursion = orig
 
     return _base_dir
+
+
+def fix_tempfile_module():
+    # We want the tempfile module to use base_dir() as its tempdir, but we dont
+    # want to call base_dir() now as it will possibly create a tempdir, do that
+    # only on demand.
+    global get_default_tempdir
+    if tempfile._gettempdir is not base_dir:  # type: ignore
+        get_default_tempdir = tempfile._gettempdir  # type: ignore
+        tempfile._gettempdir = base_dir  # type: ignore
 
 
 def reset_base_dir():
     global _base_dir
     _base_dir = None
-    base_dir()
+
+
+@contextmanager
+def override_base_dir(newval: str) -> Generator[None]:
+    global _base_dir
+    before, _base_dir = _base_dir, newval
+    try:
+        yield
+    finally:
+        _base_dir = before
 
 
 def force_unicode(x):
@@ -156,16 +140,16 @@ def _make_dir(suffix, prefix, base):
 
 
 class PersistentTemporaryFile:
-
     """
     A file-like object that is a temporary file that is available even after being closed on
     all platforms. It is automatically deleted on normal program termination.
     """
-    _file = None
 
-    def __init__(self, suffix="", prefix="", dir=None, mode='w+b'):
+    _file: IO[bytes]
+
+    def __init__(self, suffix='', prefix='', dir=None, mode='w+b'):
         if prefix is None:
-            prefix = ""
+            prefix = ''
         if dir is None:
             dir = base_dir()
         fd, name = _make_file(suffix, prefix, dir)
@@ -173,12 +157,70 @@ class PersistentTemporaryFile:
         self._file = os.fdopen(fd, mode)
         self._name = name
         self._fd = fd
-        atexit.register(cleanup, name)
+        remove_file_atexit(name)
 
-    def __getattr__(self, name):
-        if name == 'name':
-            return self.__dict__['_name']
-        return getattr(self.__dict__['_file'], name)
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @name.setter
+    def name(self, val: str) -> None:
+        self._name = val
+
+    def read(self, size: int = -1, /) -> bytes:
+        return self._file.read(size)
+
+    def readline(self, size: int = -1, /) -> bytes:
+        return self._file.readline(size)
+
+    def readlines(self, hint: int = -1, /) -> list[bytes]:
+        return self._file.readlines(hint)
+
+    def write(self, data: Buffer, /) -> int:
+        return self._file.write(data)
+
+    def writelines(self, lines: Iterable[Buffer], /) -> None:
+        self._file.writelines(lines)
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET, /) -> int:
+        return self._file.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._file.tell()
+
+    def truncate(self, size: int | None = None, /) -> int:
+        return self._file.truncate(size)
+
+    def flush(self) -> None:
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+    def fileno(self) -> int:
+        return self._file.fileno()
+
+    def isatty(self) -> bool:
+        return self._file.isatty()
+
+    def readable(self) -> bool:
+        return self._file.readable()
+
+    def writable(self) -> bool:
+        return self._file.writable()
+
+    def seekable(self) -> bool:
+        return self._file.seekable()
+
+    @property
+    def closed(self) -> bool:
+        return self._file.closed
+
+    def __iter__(self) -> Iterator[bytes]:
+        return iter(self._file)
+
+    def __next__(self) -> bytes:
+        return next(self._file)
 
     def __enter__(self):
         return self
@@ -189,28 +231,26 @@ class PersistentTemporaryFile:
     def __del__(self):
         try:
             self.close()
-        except:
+        except Exception:
             pass
 
 
 def PersistentTemporaryDirectory(suffix='', prefix='', dir=None):
-    '''
+    """
     Return the path to a newly created temporary directory that will
     be automatically deleted on application exit.
-    '''
+    """
     if dir is None:
         dir = base_dir()
     tdir = _make_dir(suffix, prefix, dir)
-
-    atexit.register(remove_dir, tdir)
+    remove_folder_atexit(tdir)
     return tdir
 
 
 class TemporaryDirectory:
-
-    '''
+    """
     A temporary directory to be used in a with statement.
-    '''
+    """
 
     def __init__(self, suffix='', prefix='', dir=None, keep=False):
         self.suffix = suffix
@@ -231,8 +271,7 @@ class TemporaryDirectory:
 
 
 class TemporaryFile:
-
-    def __init__(self, suffix="", prefix="", dir=None, mode='w+b'):
+    def __init__(self, suffix='', prefix='', dir=None, mode='w+b'):
         if prefix is None:
             prefix = ''
         if suffix is None:
@@ -250,13 +289,11 @@ class TemporaryFile:
         return name
 
     def __exit__(self, *args):
-        cleanup(self._name)
+        unlink(self._name)
 
 
 class SpooledTemporaryFile(tempfile.SpooledTemporaryFile):
-
-    def __init__(self, max_size=0, suffix="", prefix="", dir=None, mode='w+b',
-            bufsize=-1):
+    def __init__(self, max_size=0, suffix='', prefix='', dir=None, mode='w+b', bufsize=-1):
         if prefix is None:
             prefix = ''
         if suffix is None:
@@ -264,8 +301,7 @@ class SpooledTemporaryFile(tempfile.SpooledTemporaryFile):
         if dir is None:
             dir = base_dir()
         self._name = None
-        tempfile.SpooledTemporaryFile.__init__(self, max_size=max_size,
-                suffix=suffix, prefix=prefix, dir=dir, mode=mode)
+        tempfile.SpooledTemporaryFile.__init__(self, max_size=max_size, suffix=suffix, prefix=prefix, dir=dir, mode=mode)
 
     @property
     def name(self):
@@ -290,3 +326,33 @@ def better_mktemp(*args, **kwargs):
     fd, path = tempfile.mkstemp(*args, **kwargs)
     os.close(fd)
     return path
+
+
+def is_in_system_tempdir(path: str) -> bool:
+    """Check if path is an existing file or folder inside the temporary folder
+    of the system. Used to sanity check paths that are going to be deleted."""
+    from calibre.utils.filenames import is_path_inside
+
+    try:
+        # realpath() so that neither symlinks nor, on Windows, short names can
+        # be used to make a path outside the temporary folder look like one
+        # inside it
+        tdir = os.path.realpath(get_default_tempdir(), strict=True)  # type: ignore
+        path = os.path.realpath(path, strict=True)  # type: ignore
+    except OSError:
+        return False
+    return is_path_inside(tdir, path, case_sensitive=not iswindows)
+
+
+def delete_temp_file(path: str) -> None:
+    """Delete a temporary file, also deleting the folder containing it, if that
+    folder is now empty and is itself a folder inside the temporary folder of
+    the system, as is the case for files made in a folder from mkdtemp()."""
+    from calibre.utils.filenames import remove_dir_if_empty
+
+    parent = os.path.dirname(os.path.abspath(path))
+    unlink(path)
+    # is_in_system_tempdir() is False for the temporary folder of the system
+    # itself, which must never be deleted
+    if is_in_system_tempdir(parent):
+        remove_dir_if_empty(parent, ignore_metadata_caches=True)

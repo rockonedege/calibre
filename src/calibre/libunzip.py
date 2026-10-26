@@ -1,16 +1,14 @@
 #!/usr/bin/env python
-
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2008, Kovid Goyal kovid@kovidgoyal.net
 
 import re
+
 from calibre.utils import zipfile
 from calibre.utils.icu import numeric_sort_key
 
 
 def update(pathtozip, patterns, filepaths, names, compression=zipfile.ZIP_DEFLATED, verbose=True):
-    '''
+    """
     Update files in the zip file at `pathtozip` matching the given
     `patterns` with the given `filepaths`. If more than
     one file matches, all of the files are replaced.
@@ -23,7 +21,7 @@ def update(pathtozip, patterns, filepaths, names, compression=zipfile.ZIP_DEFLAT
                         file in the archive is used.
     :param compression: The compression to use when replacing files. Can be
                         either `zipfile.ZIP_DEFLATED` or `zipfile.ZIP_STORED`.
-    '''
+    """
     assert len(patterns) == len(filepaths) == len(names)
     z = zipfile.ZipFile(pathtozip, mode='a')
     for name in z.namelist():
@@ -65,7 +63,7 @@ def extract_member(filename, match=re.compile(r'\.(jpg|jpeg|gif|png)\s*$', re.I)
             return name, zf.read(name)
 
 
-comic_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+comic_exts = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'jxl'}
 
 
 def name_ok(name):

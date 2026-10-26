@@ -1,16 +1,14 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-from uuid import uuid4
 import time
+from uuid import uuid4
 
+from calibre import prepare_string_for_xml as xml
+from calibre import strftime
 from calibre.constants import __appname__, __version__
-from calibre import strftime, prepare_string_for_xml as xml
 from calibre.utils.date import parse_date
+from calibre.utils.localization import _
 
 SONY_METADATA = '''\
 <?xml version="1.0" encoding="utf-8"?>
@@ -86,24 +84,26 @@ def sony_metadata(oeb):
     try:
         pt = str(oeb.metadata.publication_type[0])
         short_title = ':'.join(pt.split(':')[2:])
-    except:
+    except Exception:
         pass
 
     try:
-        date = parse_date(str(m.date[0]),
-                as_utc=False).strftime('%Y-%m-%d')
-    except:
+        date = parse_date(str(m.date[0]), as_utc=False).strftime('%Y-%m-%d')
+    except Exception:
         date = strftime('%Y-%m-%d')
     try:
         language = str(m.language[0]).replace('_', '-')
-    except:
+    except Exception:
         language = 'en'
     short_title = xml(short_title, True)
 
-    metadata = SONY_METADATA.format(title=xml(title),
-            short_title=short_title,
-            publisher=xml(publisher), issue_date=xml(date),
-            language=xml(language))
+    metadata = SONY_METADATA.format(
+        title=xml(title),
+        short_title=short_title,
+        publisher=xml(publisher),
+        issue_date=xml(date),
+        language=xml(language),
+    )
 
     updated = strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
@@ -114,7 +114,7 @@ def sony_metadata(oeb):
 
     try:
         base_id = str(list(filter(cal_id, m.identifier))[0])
-    except:
+    except Exception:
         base_id = str(uuid4())
 
     toc = oeb.toc
@@ -123,12 +123,11 @@ def sony_metadata(oeb):
         # Single section periodical
         # Disabled since I prefer the current behavior
         from calibre.ebooks.oeb.base import TOC
-        section = TOC(klass='section', title=_('All articles'),
-                    href=oeb.spine[2].href)
+
+        section = TOC(klass='section', title=_('All articles'), href=oeb.spine[2].href)
         for x in toc:
             section.nodes.append(x)
-        toc = TOC(klass='periodical', href=oeb.spine[2].href,
-                    title=str(oeb.metadata.title[0]))
+        toc = TOC(klass='periodical', href=oeb.spine[2].href, title=str(oeb.metadata.title[0]))
         toc.nodes.append(section)
 
     entries = []
@@ -136,7 +135,7 @@ def sony_metadata(oeb):
     for i, section in enumerate(toc):
         if not section.href:
             continue
-        secid = 'section%d'%i
+        secid = f'section{i}'
         sectitle = section.title
         if not sectitle:
             sectitle = _('Unknown')
@@ -151,9 +150,16 @@ def sony_metadata(oeb):
         if not secdesc:
             secdesc = ''
         secdesc = xml(secdesc)
-        entries.append(SONY_ATOM_SECTION.format(title=sectitle,
-            href=section.href, id=xml(base_id)+'/'+secid,
-            short_title=short_title, desc=secdesc, updated=updated))
+        entries.append(
+            SONY_ATOM_SECTION.format(
+                title=sectitle,
+                href=section.href,
+                id=xml(base_id) + '/' + secid,
+                short_title=short_title,
+                desc=secdesc,
+                updated=updated,
+            )
+        )
 
         for j, article in enumerate(section):
             if not article.href:
@@ -165,26 +171,26 @@ def sony_metadata(oeb):
                 atitle = btitle + ' ' + str(d)
                 d += 1
 
-            auth = article.author if article.author else ''
+            auth = article.author or ''
             desc = section.description
             if not desc:
                 desc = ''
-            aid = 'article%d'%j
+            aid = f'article{j}'
 
-            entries.append(SONY_ATOM_ENTRY.format(
-                title=xml(atitle),
-                author=xml(auth),
-                updated=updated,
-                desc=desc,
-                short_title=short_title,
-                section_title=sectitle,
-                href=article.href,
-                word_count=str(1),
-                id=xml(base_id)+'/'+secid+'/'+aid
-            ))
+            entries.append(
+                SONY_ATOM_ENTRY.format(
+                    title=xml(atitle),
+                    author=xml(auth),
+                    updated=updated,
+                    desc=desc,
+                    short_title=short_title,
+                    section_title=sectitle,
+                    href=article.href,
+                    word_count=str(1),
+                    id=xml(base_id) + '/' + secid + '/' + aid,
+                )
+            )
 
-    atom = SONY_ATOM.format(short_title=short_title,
-            entries='\n\n'.join(entries), updated=updated,
-            id=xml(base_id)).encode('utf-8')
+    atom = SONY_ATOM.format(short_title=short_title, entries='\n\n'.join(entries), updated=updated, id=xml(base_id)).encode('utf-8')
 
     return metadata, atom

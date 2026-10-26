@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-# vim:fileencoding=utf-8
 # License: GPL v3 Copyright: 2022, Kovid Goyal <kovid at kovidgoyal.net>
 
+import io
 import os
 import sys
 import tempfile
 from posixpath import normpath
+
 from qt.core import QFile, QIODevice
 
 from calibre_extensions import rcc_backend
@@ -14,7 +15,13 @@ from calibre_extensions import rcc_backend
 def compile_qrc(output_path, *qrc_file_paths):
     rcc = rcc_backend.RCCResourceLibrary()
     err_device = QFile()
-    if not err_device.open(sys.stderr.fileno(), QIODevice.OpenModeFlag.WriteOnly | QIODevice.OpenModeFlag.Text):
+
+    try:
+        assert sys.__stderr__ is not None
+        fd = sys.__stderr__.fileno()
+    except io.UnsupportedOperation:
+        fd = 2
+    if not err_device.open(fd, QIODevice.OpenModeFlag.WriteOnly | QIODevice.OpenModeFlag.Text):
         raise ValueError('Failed to open STDERR for writing')
     if not qrc_file_paths:
         raise TypeError('Must specify at least one .qrc file')
@@ -52,8 +59,12 @@ def safe_link(src, dest):
 
 
 def compile_icon_dir_as_themes(
-    path_to_dir, output_path, theme_name='calibre-default', inherits='',
-    for_theme='any', prefix='/icons',
+    path_to_dir,
+    output_path,
+    theme_name='calibre-default',
+    inherits='',
+    for_theme='any',
+    prefix='/icons',
 ):
     with tempfile.TemporaryDirectory(dir=path_to_dir) as tdir, open(os.path.join(tdir, 'icons.qrc'), 'w') as qrc:
         print('<RCC>', file=qrc)
@@ -88,7 +99,7 @@ def compile_icon_dir_as_themes(
             base, ext = os.path.splitext(image_name)
             theme_dir = theme_name
             dest_name = image_name
-            if ext.lower() not in ('.png',):
+            if ext.lower() != '.png':
                 if image_name == 'metadata.json':
                     dest = theme_dir, dest_name
                     safe_link(image_path, os.path.join(tdir, *dest))

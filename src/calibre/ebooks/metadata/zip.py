@@ -1,16 +1,16 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 
-from calibre.utils.zipfile import ZipFile
-from calibre.ptempfile import TemporaryDirectory
 from calibre import CurrentDir
+from calibre.ptempfile import TemporaryDirectory
+from calibre.utils.zipfile import ZipFile
 
 
 def get_metadata(stream):
-    from calibre.ebooks.metadata.meta import get_metadata
     from calibre.ebooks.metadata.archive import is_comic
+    from calibre.ebooks.metadata.meta import get_metadata
+
     stream_type = None
     zf = ZipFile(stream, 'r')
     names = zf.namelist()
@@ -22,12 +22,25 @@ def get_metadata(stream):
         stream_type = os.path.splitext(f)[1].lower()
         if stream_type:
             stream_type = stream_type[1:]
-            if stream_type in ('lit', 'opf', 'prc', 'mobi', 'fb2', 'epub',
-                               'rb', 'imp', 'pdf', 'lrf', 'azw', 'azw1', 'azw3'):
+            if stream_type in (
+                'lit',
+                'opf',
+                'prc',
+                'mobi',
+                'fb2',
+                'epub',
+                'rb',
+                'imp',
+                'pdf',
+                'lrf',
+                'azw',
+                'azw1',
+                'azw3',
+            ):
                 with TemporaryDirectory() as tdir:
                     with CurrentDir(tdir):
                         path = zf.extract(f)
-                        mi = get_metadata(open(path,'rb'), stream_type)
+                        mi = get_metadata(open(path, 'rb'), stream_type)
                         if stream_type == 'opf' and mi.application_id is None:
                             try:
                                 # zip archive opf files without an application_id were assumed not to have a cover
@@ -35,15 +48,16 @@ def get_metadata(stream):
                                 nmi = zip_opf_metadata(path, zf)
                                 nmi.timestamp = None
                                 return nmi
-                            except:
+                            except Exception:
                                 pass
                         mi.timestamp = None
                         return mi
-    raise ValueError('No ebook found in ZIP archive (%s)' % os.path.basename(getattr(stream, 'name', '') or '<stream>'))
+    raise ValueError('No ebook found in ZIP archive ({})'.format(os.path.basename(getattr(stream, 'name', '') or '<stream>')))
 
 
 def zip_opf_metadata(opfpath, zf):
     from calibre.ebooks.metadata.opf2 import OPF
+
     if hasattr(opfpath, 'read'):
         f = opfpath
         opfpath = getattr(f, 'name', os.getcwd())

@@ -1,22 +1,20 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid@kovidgoyal.net>
 
 import importlib
 import os
 import time
 import traceback
+from collections.abc import Iterable
 from multiprocessing import Pipe
 from threading import Thread
+from typing import Any
 
 from calibre.constants import iswindows
 from calibre.utils.ipc import eintr_retry_call
-from calibre.utils.ipc.launch import Worker
+from calibre.utils.ipc.launch import Worker, windows_creationflags_for_worker_process
 from calibre.utils.monotonic import monotonic
-from polyglot.builtins import environ_item, string_or_bytes
+from polyglot.builtins import environ_item
 
 if iswindows:
     from multiprocessing.connection import PipeConnection as Connection
@@ -24,16 +22,24 @@ else:
     from multiprocessing.connection import Connection
 
 
-class WorkerError(Exception):
+# Time to wait for the thread reading the worker's response to finish, once the
+# worker process itself has exited
+WORKER_RESPONSE_TIMEOUT = 5  # seconds
 
+
+class WorkerError(Exception):
     def __init__(self, msg, orig_tb='', log_path=None):
         Exception.__init__(self, msg)
         self.orig_tb = orig_tb
         self.log_path = log_path
 
+        if orig_tb:
+            self.add_note(f'Original traceback:\n{orig_tb}')
+        if log_path:
+            self.add_note(f'Log path: {log_path}')
+
 
 class ConnectedWorker(Thread):
-
     def __init__(self, conn, args):
         Thread.__init__(self)
         self.daemon = True
@@ -56,7 +62,6 @@ class ConnectedWorker(Thread):
 
 
 class OffloadWorker:
-
     def __init__(self, conn, worker):
         self.conn = conn
         self.worker = worker
@@ -64,22 +69,25 @@ class OffloadWorker:
         t.daemon = True
 
     def __call__(self, module, func, *args, **kwargs):
+        assert self.conn is not None
         eintr_retry_call(self.conn.send, (module, func, args, kwargs))
         return eintr_retry_call(self.conn.recv)
 
     def shutdown(self):
+        assert self.conn is not None
         try:
             eintr_retry_call(self.conn.send, None)
         except OSError:
             pass
-        except:
+        except Exception:
             import traceback
+
             traceback.print_exc()
         finally:
             self.conn = None
             try:
                 os.remove(self.worker.log_path)
-            except:
+            except Exception:
                 pass
             self.kill_thread.start()
 
@@ -87,8 +95,7 @@ class OffloadWorker:
         return self.worker.is_alive or self.kill_thread.is_alive()
 
 
-def communicate(ans, worker, conn, args, timeout=300, heartbeat=None,
-        abort=None):
+def communicate(ans, worker, conn, args, timeout=300, heartbeat=None, abort=None):
     cw = ConnectedWorker(conn, args)
     cw.start()
     st = monotonic()
@@ -105,6 +112,13 @@ def communicate(ans, worker, conn, args, timeout=300, heartbeat=None,
         if abort is not None and abort.is_set():
             # The worker process will be killed by fork_job, after we return
             return
+
+    # The worker process exits as soon as it has sent its response, which can
+    # happen before the thread that reads the response has had a chance to store
+    # it, so give that thread time to finish, otherwise a successful job is
+    # intermittently reported as a worker that died. If the worker really did
+    # die, the read fails at once with EOF, so genuine failures are not delayed.
+    cw.join(WORKER_RESPONSE_TIMEOUT)
 
     if not cw.accepted:
         if not cw.tb:
@@ -126,7 +140,7 @@ def create_worker(env, priority='normal', cwd=None, func='main'):
     with a:
         env.update({
             'CALIBRE_WORKER_FD': str(a.fileno()),
-            'CALIBRE_SIMPLE_WORKER': environ_item('calibre.utils.ipc.simple_worker:%s' % func),
+            'CALIBRE_SIMPLE_WORKER': environ_item(f'calibre.utils.ipc.simple_worker:{func}'),
         })
 
         w = Worker(env)
@@ -136,28 +150,25 @@ def create_worker(env, priority='normal', cwd=None, func='main'):
 
 def start_pipe_worker(command, env=None, priority='normal', **process_args):
     import subprocess
+
     w = Worker(env or {})
-    args = {'stdout':subprocess.PIPE, 'stdin':subprocess.PIPE, 'env':w.env, 'close_fds': True}
+    args: dict[str, Any] = {'stdout': subprocess.PIPE, 'stdin': subprocess.PIPE, 'env': w.env, 'close_fds': True}
     args.update(process_args)
-    pass_fds = None
+    pass_fds: Iterable[int] | None = None
     try:
         if iswindows:
-            priority = {
-                    'high'   : subprocess.HIGH_PRIORITY_CLASS,
-                    'normal' : subprocess.NORMAL_PRIORITY_CLASS,
-                    'low'    : subprocess.IDLE_PRIORITY_CLASS}[priority]
-            args['creationflags'] = subprocess.CREATE_NO_WINDOW|priority
-            pass_fds = args.pop('pass_fds', None)
+            args['creationflags'] = windows_creationflags_for_worker_process(priority)
+            pass_fds = args.pop('pass_fds', ())
             if pass_fds:
                 for fd in pass_fds:
                     os.set_handle_inheritable(fd, True)
-                args['startupinfo'] = subprocess.STARTUPINFO(lpAttributeList={'handle_list':pass_fds})
+                args['startupinfo'] = subprocess.STARTUPINFO(lpAttributeList={'handle_list': pass_fds})
         else:
-            niceness = {'normal' : 0, 'low'    : 10, 'high'   : 20}[priority]
+            niceness = {'normal': 0, 'low': 10, 'high': 20}[priority]
             args['env']['CALIBRE_WORKER_NICENESS'] = str(niceness)
 
         exe = w.executable
-        cmd = [exe] if isinstance(exe, string_or_bytes) else exe
+        cmd = [exe] if isinstance(exe, (str, bytes)) else exe
         p = subprocess.Popen(cmd + ['--pipe-worker', command], **args)
     finally:
         if iswindows and pass_fds:
@@ -171,40 +182,65 @@ def two_part_fork_job(env=None, priority='normal', cwd=None):
     conn, w = create_worker(env, priority, cwd)
 
     def run_job(
-        mod_name, func_name, args=(), kwargs=None, timeout=300,  # seconds
-        no_output=False, heartbeat=None, abort=None, module_is_source_code=False
+        mod_name,
+        func_name,
+        args=(),
+        kwargs=None,
+        timeout=300,  # seconds
+        no_output=False,
+        heartbeat=None,
+        abort=None,
+        module_is_source_code=False,
     ):
-        ans = {'result':None, 'stdout_stderr':None}
+        ans = {'result': None, 'stdout_stderr': None}
         kwargs = kwargs or {}
         try:
-            communicate(ans, w, conn, (mod_name, func_name, args, kwargs,
-                module_is_source_code), timeout=timeout, heartbeat=heartbeat,
-                abort=abort)
+            communicate(
+                ans,
+                w,
+                conn,
+                (mod_name, func_name, args, kwargs, module_is_source_code),
+                timeout=timeout,
+                heartbeat=heartbeat,
+                abort=abort,
+            )
         except WorkerError as e:
             if not no_output:
                 e.log_path = w.log_path
             raise
         finally:
             t = Thread(target=w.kill)
-            t.daemon=True
+            t.daemon = True
             t.start()
             if no_output:
                 try:
                     os.remove(w.log_path)
-                except:
+                except Exception:
                     pass
         if not no_output:
             ans['stdout_stderr'] = w.log_path
         return ans
-    run_job.worker = w
+
+    setattr(run_job, 'worker', w)
 
     return run_job
 
 
-def fork_job(mod_name, func_name, args=(), kwargs=None, timeout=300,  # seconds
-        cwd=None, priority='normal', env={}, no_output=False, heartbeat=None,
-        abort=None, module_is_source_code=False):
-    '''
+def fork_job(
+    mod_name,
+    func_name,
+    args=(),
+    kwargs=None,
+    timeout=300,  # seconds
+    cwd=None,
+    priority='normal',
+    env=None,
+    no_output=False,
+    heartbeat=None,
+    abort=None,
+    module_is_source_code=False,
+):
+    """
     Run a job in a worker process. A job is simply a function that will be
     called with the supplied arguments, in the worker process.
     The result of the function will be returned.
@@ -251,15 +287,25 @@ def fork_job(mod_name, func_name, args=(), kwargs=None, timeout=300,  # seconds
     return value of the function (it must be picklable). stdout_stderr is the
     path to a file that contains the stdout and stderr of the worker process.
     If you set no_output=True, then this will not be present.
-    '''
+    """
+    if env is None:
+        env = {}
     return two_part_fork_job(env, priority, cwd)(
-        mod_name, func_name, args=args, kwargs=kwargs, timeout=timeout,
-        no_output=no_output, heartbeat=heartbeat, abort=abort,
-        module_is_source_code=module_is_source_code
+        mod_name,
+        func_name,
+        args=args,
+        kwargs=kwargs,
+        timeout=timeout,
+        no_output=no_output,
+        heartbeat=heartbeat,
+        abort=abort,
+        module_is_source_code=module_is_source_code,
     )
 
 
-def offload_worker(env={}, priority='normal', cwd=None):
+def offload_worker(env=None, priority='normal', cwd=None):
+    if env is None:
+        env = {}
     conn, w = create_worker(env=env, priority=priority, cwd=cwd, func='offload')
     return OffloadWorker(conn, w)
 
@@ -267,8 +313,9 @@ def offload_worker(env={}, priority='normal', cwd=None):
 def compile_code(src):
     import io
     import re
+
     if not isinstance(src, str):
-        match = re.search(br'coding[:=]\s*([-\w.]+)', src[:200])
+        match = re.search(rb'coding[:=]\s*([-\w.]+)', src[:200])
         enc = match.group(1).decode('utf-8') if match else 'utf-8'
         src = src.decode(enc)
     # Python complains if there is a coding declaration in a unicode string
@@ -277,7 +324,10 @@ def compile_code(src):
     src = io.StringIO(src, newline=None).getvalue()
 
     namespace = {
-            'time':time, 're':re, 'os':os, 'io':io,
+        'time': time,
+        're': re,
+        'os': os,
+        'io': io,
     }
     exec(src, namespace)
     return namespace
@@ -288,25 +338,25 @@ def main():
     with Connection(int(os.environ['CALIBRE_WORKER_FD'])) as conn:
         args = eintr_retry_call(conn.recv)
         try:
-            mod, func, args, kwargs, module_is_source_code = args
+            mod_name, func, args, kwargs, module_is_source_code = args
             if module_is_source_code:
                 importlib.import_module('calibre.customize.ui')  # Load plugins
-                mod = compile_code(mod)
+                mod = compile_code(mod_name)
                 func = mod[func]
             else:
                 try:
-                    mod = importlib.import_module(mod)
+                    mod = importlib.import_module(mod_name)
                 except ImportError:
                     importlib.import_module('calibre.customize.ui')  # Load plugins
-                    mod = importlib.import_module(mod)
+                    mod = importlib.import_module(mod_name)
                 func = getattr(mod, func)
-            res = {'result':func(*args, **kwargs)}
-        except:
+            res = {'result': func(*args, **kwargs)}
+        except Exception:
             res = {'tb': traceback.format_exc()}
 
         try:
             conn.send(res)
-        except:
+        except Exception:
             # Maybe EINTR
             conn.send(res)
 
@@ -319,7 +369,7 @@ def offload():
             args = eintr_retry_call(conn.recv)
             if args is None:
                 break
-            res = {'result':None, 'tb':None}
+            res = {'result': None, 'tb': None}
             try:
                 mod, func, args, kwargs = args
                 if mod is None:
@@ -334,8 +384,9 @@ def offload():
                         m = importlib.import_module(mod)
                     func_cache[(mod, func)] = f = getattr(m, func)
                 res['result'] = f(*args, **kwargs)
-            except:
+            except Exception:
                 import traceback
+
                 res['tb'] = traceback.format_exc()
 
             eintr_retry_call(conn.send, res)

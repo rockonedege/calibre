@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 store_version = 2  # Needed for dynamic plugin loading
 
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
-
 import mimetypes
 from contextlib import closing
-
-from lxml import etree
 
 from calibre import browser
 from calibre.gui2.store.basic_config import BasicStoreConfig
@@ -18,17 +14,18 @@ from calibre.gui2.store.opensearch_store import OpenSearchOPDSStore
 from calibre.gui2.store.search_result import SearchResult
 from calibre.utils.opensearch.description import Description
 from calibre.utils.opensearch.query import Query
+from calibre.utils.xml_parse import safe_xml_fromstring
 
 
 def search_manybooks(query, max_results=10, timeout=60, open_search_url='http://www.manybooks.net/opds/'):
-    '''
+    """
     Manybooks uses a very strange opds feed. The opds
     main feed is structured like a stanza feed. The
     search result entries give very little information
     and requires you to go to a detail link. The detail
     link has the wrong type specified (text/html instead
     of application/atom+xml).
-    '''
+    """
 
     description = Description(open_search_url)
     url_template = description.get_best_template()
@@ -45,8 +42,7 @@ def search_manybooks(query, max_results=10, timeout=60, open_search_url='http://
     br = browser()
     with closing(br.open(url, timeout=timeout)) as f:
         raw_data = f.read()
-        raw_data = raw_data.decode('utf-8', 'replace')
-        doc = etree.fromstring(raw_data, parser=etree.XMLParser(recover=True, no_network=True, resolve_entities=False))
+        doc = safe_xml_fromstring(raw_data)
         for data in doc.xpath('//*[local-name() = "entry"]'):
             if counter <= 0:
                 break
@@ -70,8 +66,8 @@ def search_manybooks(query, max_results=10, timeout=60, open_search_url='http://
             s.author = ', '.join(data.xpath('./*[local-name() = "author"]//text()')).strip()
 
             # Follow the detail link to get the rest of the info.
-            with closing(br.open(detail_href, timeout=timeout/4)) as df:
-                ddoc = etree.fromstring(df.read(), parser=etree.XMLParser(recover=True, no_network=True, resolve_entities=False))
+            with closing(br.open(detail_href, timeout=timeout / 4)) as df:
+                ddoc = safe_xml_fromstring(df.read())
                 ddata = ddoc.xpath('//*[local-name() = "entry"][1]')
                 if ddata:
                     ddata = ddata[0]
@@ -104,7 +100,6 @@ def search_manybooks(query, max_results=10, timeout=60, open_search_url='http://
 
 
 class ManyBooksStore(BasicStoreConfig, OpenSearchOPDSStore):
-
     open_search_url = 'http://www.manybooks.net/opds/'
     web_url = 'http://manybooks.net'
 
@@ -115,5 +110,6 @@ class ManyBooksStore(BasicStoreConfig, OpenSearchOPDSStore):
 
 if __name__ == '__main__':
     import sys
+
     for result in search_manybooks(' '.join(sys.argv[1:])):
         print(result)

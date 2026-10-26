@@ -1,30 +1,28 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-'''
+"""
 Measure memory usage of the current process.
 
 The key function is memory() which returns the current memory usage in MB.
 You can pass a number to memory and it will be subtracted from the returned
 value.
-'''
+"""
 
-import gc, os
+import gc
+import os
 
 
 def get_memory():
-    'Return memory usage in bytes'
+    "Return memory usage in bytes"
     # See https://pythonhosted.org/psutil/#psutil.Process.memory_info
     import psutil
+
     return psutil.Process(os.getpid()).memory_info().rss
 
 
 def memory(since=0.0):
-    'Return memory used in MB. The value of since is subtracted from the used memory'
+    "Return memory used in MB. The value of since is subtracted from the used memory"
     ans = get_memory()
     ans /= float(1024**2)
     return ans - since
@@ -46,5 +44,4 @@ def diff_hists(h1, h2):
         if k not in h2:
             h2[k] = 0
         if h1[k] != h2[k]:
-            print("%s: %d -> %d (%s%d)" % (
-                k, h1[k], h2[k], h2[k] > h1[k] and "+" or "", h2[k] - h1[k]))
+            print(f"{k}: {h1[k]} -> {h2[k]} ({(h2[k] > h1[k] and '+') or ''}{h2[k] - h1[k]})")

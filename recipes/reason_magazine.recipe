@@ -2,13 +2,14 @@
 # vim:fileencoding=utf-8
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 from __future__ import unicode_literals
+
 import json
 
 from calibre import prepare_string_for_xml
 from calibre.web.feeds.news import BasicNewsRecipe, classes
 
 
-# {{{ parse article JSON
+# parse article JSON {{{
 def process_image_block(lines, block):
     caption = block.get('captionText')
     caption_lines = []
@@ -24,7 +25,7 @@ def process_image_block(lines, block):
 def json_to_html(raw):
     data = json.loads(raw)
     # open('/t/p.json', 'w').write(json.dumps(data, indent=2))
-    data = sorted((v['data'] for v in data['props']['pageProps']['urqlState'].values()), key=len)[-1]
+    data = max((v['data'] for v in data['props']['pageProps']['urqlState'].values()), key=len)
     article = json.loads(data)['article']
     lines = []
     lines.append('<h1 style="align: center">' + prepare_string_for_xml(article['title']) + '</h1>')
@@ -60,11 +61,11 @@ def extract_html(soup):
     raw = script[0].contents[0]
     return json_to_html(raw)
 
+
 # }}}
 
 
 class Reason(BasicNewsRecipe):
-
     title = 'Reason'
     description = 'Free minds and free markets'
     INDEX = 'https://reason.com/magazine/'
@@ -97,9 +98,9 @@ class Reason(BasicNewsRecipe):
         br = BasicNewsRecipe.get_browser(self)
         if self.username is not None and self.password is not None:
             br.open('https://reason.com/login')
-            br.select_form(id='login_form')
-            br['text_username'] = self.username
-            br['password_password'] = self.password
+            br.select_form(id='gform_0')
+            br['input_1'] = self.username
+            br['input_2'] = self.password
             br.submit()
         return br
 
@@ -143,11 +144,7 @@ class Reason(BasicNewsRecipe):
                     title = h3.find_next_sibling().a.text
                     url = h3.find_next_sibling().a['href']
                     desc = h3.find_next_sibling().p.text
-                    current_articles.append({
-                        'title': title,
-                        'url': url,
-                        'description': desc
-                    })
+                    current_articles.append({'title': title, 'url': url, 'description': desc})
             for h2 in div.findAll('h2', attrs={'class': True}):
                 cls = h2['class']
                 if hasattr(cls, 'split'):
@@ -167,11 +164,7 @@ class Reason(BasicNewsRecipe):
                         title = ''
                         url = ''
                     desc = h4.find_next_sibling().text
-                    current_articles.append({
-                        'title': title,
-                        'url': url,
-                        'description': desc
-                    })
+                    current_articles.append({'title': title, 'url': url, 'description': desc})
 
         if current_articles:
             feeds.append((current_section, current_articles))
@@ -182,4 +175,5 @@ if __name__ == '__main__':
     import sys
 
     from calibre.ebooks.BeautifulSoup import BeautifulSoup
+
     print(extract_html(BeautifulSoup(open(sys.argv[-1]).read())))

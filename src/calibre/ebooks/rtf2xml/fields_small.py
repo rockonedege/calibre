@@ -10,37 +10,41 @@
 #                                                                       #
 #                                                                       #
 #########################################################################
-import sys, os, re
+import os
+import re
+import sys
 
-from calibre.ebooks.rtf2xml import field_strings, copy
+from calibre.ebooks.rtf2xml import copy, field_strings
 from calibre.ptempfile import better_mktemp
+
 from . import open_for_read, open_for_write
 
 
 class FieldsSmall:
     """
-=================
-Purpose
-=================
-Write tags for bookmarks, index and toc entry fields in a tokenized file.
-This module does not handle toc or index tables.  (This module won't be any
-use to you unless you use it as part of the other modules.)
------------
-Method
------------
-Look for the beginning of a bookmark, index, or toc entry. When such a token
-is found, store the opening bracket count in a variable. Collect all the text
-until the closing bracket entry is found. Send the string to the module
-field_strings to process it. Write the processed string to the output
-file.
+    =================
+    Purpose
+    =================
+    Write tags for bookmarks, index and toc entry fields in a tokenized file.
+    This module does not handle toc or index tables.  (This module won't be any
+    use to you unless you use it as part of the other modules.)
+    -----------
+    Method
+    -----------
+    Look for the beginning of a bookmark, index, or toc entry. When such a token
+    is found, store the opening bracket count in a variable. Collect all the text
+    until the closing bracket entry is found. Send the string to the module
+    field_strings to process it. Write the processed string to the output
+    file.
     """
 
-    def __init__(self,
-            in_file,
-            bug_handler,
-            copy=None,
-            run_level=1,
-            ):
+    def __init__(
+        self,
+        in_file,
+        bug_handler,
+        copy=None,
+        run_level=1,
+    ):
         """
         Required:
             'file'--file to parse
@@ -50,7 +54,7 @@ file.
             directory from which the script is run.)
         Returns:
             nothing
-            """
+        """
         self.__file = in_file
         self.__bug_handler = bug_handler
         self.__copy = copy
@@ -66,23 +70,23 @@ file.
         self.__text_string = ''
         self.__marker = 'mi<mk<inline-fld\n'
         self.__state_dict = {
-        'before_body'   : self.__before_body_func,
-        'body'  : self.__body_func,
-        'bookmark'  : self.__bookmark_func,
-        'toc_index'       : self.__toc_index_func,
+            'before_body': self.__before_body_func,
+            'body': self.__body_func,
+            'bookmark': self.__bookmark_func,
+            'toc_index': self.__toc_index_func,
         }
         self.__body_dict = {
-        'cw<an<book-mk-st'      : (self.__found_bookmark_func, 'start'),
-        'cw<an<book-mk-en'      : (self.__found_bookmark_func, 'end'),
-        'cw<an<toc_______'      : (self.__found_toc_index_func, 'toc'),
-        'cw<an<index-mark'      : (self.__found_toc_index_func, 'index'),
+            'cw<an<book-mk-st': (self.__found_bookmark_func, 'start'),
+            'cw<an<book-mk-en': (self.__found_bookmark_func, 'end'),
+            'cw<an<toc_______': (self.__found_toc_index_func, 'toc'),
+            'cw<an<index-mark': (self.__found_toc_index_func, 'index'),
         }
         ob = 'ob<nu<open-brack.....'
         cb = 'cb<nu<clos-brack'
         bk_st = 'cw<an<book-mk-st<nu<true'
         tx = 'tx<nu<__________<(.*?)'
         reg_st = ob + bk_st + tx + cb
-        self.__book_start = re.compile(r'%s' % reg_st)
+        self.__book_start = re.compile(rf'{reg_st}')
 
     def __before_body_func(self, line):
         """
@@ -108,8 +112,7 @@ file.
             This function handles all the lines in the body of the documents.
             Look for a bookmark, index or toc entry and take the appropriate action.
         """
-        action, tag = \
-           self.__body_dict.get(self.__token_info, (None, None))
+        action, tag = self.__body_dict.get(self.__token_info, (None, None))
         if action:
             action(line, tag)
         else:
@@ -145,14 +148,10 @@ file.
         """
         if self.__beg_bracket_count == self.__cb_count:
             self.__state = 'body'
-            type = 'bookmark-%s'  % self.__type_of_bookmark
+            type = f'bookmark-{self.__type_of_bookmark}'
             # change here
-            """
-            my_string = self.__string_obj.process_string(
-                self.__text_string, type)
-            """
-            my_string = self.__parse_bookmark_func(
-                self.__text_string, type)
+            # my_string = self.__string_obj.process_string(self.__text_string, type)
+            my_string = self.__parse_bookmark_func(self.__text_string, type)
             self.__write_obj.write(self.__marker)
             self.__write_obj.write(my_string)
             self.__text_string = ''
@@ -184,9 +183,9 @@ file.
         my_changed_string = 'mi<tg<empty-att_<field<type>index-entry'
         my_changed_string += '<update>static'
         if see_string:
-            my_changed_string += '<additional-text>%s' % see_string
+            my_changed_string += f'<additional-text>{see_string}'
         if bookmark_string:
-            my_changed_string += '<bookmark>%s' % bookmark_string
+            my_changed_string += f'<bookmark>{bookmark_string}'
         if italics:
             my_changed_string += '<italics>true'
         if bold:
@@ -203,9 +202,9 @@ file.
                     sub_entry += line[17:]
                 else:
                     main_entry += line[17:]
-        my_changed_string += '<main-entry>%s' % main_entry
+        my_changed_string += f'<main-entry>{main_entry}'
         if found_sub:
-            my_changed_string += '<sub-entry>%s' % sub_entry
+            my_changed_string += f'<sub-entry>{sub_entry}'
         my_changed_string += '\n'
         return my_changed_string
 
@@ -225,14 +224,13 @@ file.
             if in_see:
                 if bracket_count == end_bracket_count and token_info == 'cb<nu<clos-brack':
                     in_see = 0
-                else:
-                    if token_info == 'tx<nu<__________':
-                        see_string += line[17:]
+                elif token_info == 'tx<nu<__________':
+                    see_string += line[17:]
             else:
                 if token_info == 'cw<in<index-see_':
                     end_bracket_count = bracket_count - 1
                     in_see = 1
-                changed_string += '%s\n' % line
+                changed_string += f'{line}\n'
         return changed_string, see_string
 
     def __index_bookmark_func(self, my_string):
@@ -259,22 +257,21 @@ file.
             if in_bookmark:
                 if bracket_count == end_bracket_count and token_info == 'cb<nu<clos-brack':
                     in_bookmark = 0
-                    index_string += '%s\n' % line
+                    index_string += f'{line}\n'
+                elif token_info == 'tx<nu<__________':
+                    bookmark_string += line[17:]
                 else:
-                    if token_info == 'tx<nu<__________':
-                        bookmark_string += line[17:]
-                    else:
-                        index_string += '%s\n' % line
+                    index_string += f'{line}\n'
             else:
                 if token_info == 'cw<an<place_____':
                     end_bracket_count = bracket_count - 1
                     in_bookmark = 1
-                index_string += '%s\n' % line
+                index_string += f'{line}\n'
         return index_string, bookmark_string
 
     def __index__format_func(self, my_string):
         italics = 0
-        bold =0
+        bold = 0
         lines = my_string.split('\n')
         for line in lines:
             token_info = line[:16]
@@ -294,15 +291,14 @@ file.
         """
         toc_level = 0
         toc_suppress = 0
-        my_string, book_start_string, book_end_string =\
-        self.__parse_bookmark_for_toc(my_string)
+        my_string, book_start_string, book_end_string = self.__parse_bookmark_for_toc(my_string)
         main_entry = ''
         my_changed_string = 'mi<tg<empty-att_<field<type>toc-entry'
         my_changed_string += '<update>static'
         if book_start_string:
-            my_changed_string += '<bookmark-start>%s' % book_start_string
+            my_changed_string += f'<bookmark-start>{book_start_string}'
         if book_end_string:
-            my_changed_string += '<bookmark-end>%s' % book_end_string
+            my_changed_string += f'<bookmark-end>{book_end_string}'
         lines = my_string.split('\n')
         for line in lines:
             token_info = line[:16]
@@ -313,10 +309,10 @@ file.
             if token_info == 'cw<tc<toc-sup-nu':
                 toc_suppress = 1
         if toc_level:
-            my_changed_string += '<toc-level>%s' % toc_level
+            my_changed_string += f'<toc-level>{toc_level}'
         if toc_suppress:
             my_changed_string += '<toc-suppress-number>true'
-        my_changed_string += '<main-entry>%s' % main_entry
+        my_changed_string += f'<main-entry>{main_entry}'
         my_changed_string += '\n'
         return my_changed_string
 
@@ -346,24 +342,23 @@ file.
             if in_bookmark:
                 if bracket_count == end_bracket_count and token_info == 'cb<nu<clos-brack':
                     in_bookmark = 0
-                    toc_string += '%s\n' % line
+                    toc_string += f'{line}\n'
+                elif token_info == 'tx<nu<__________':
+                    if book_type == 'start':
+                        book_start_string += line[17:]
+                    elif book_type == 'end':
+                        book_end_string += line[17:]
                 else:
-                    if token_info == 'tx<nu<__________':
-                        if book_type == 'start':
-                            book_start_string += line[17:]
-                        elif book_type == 'end':
-                            book_end_string += line[17:]
-                    else:
-                        toc_string += '%s\n' % line
+                    toc_string += f'{line}\n'
             else:
-                if token_info == 'cw<an<book-mk-st' or token_info =='cw<an<book-mk-en':
+                if token_info in {'cw<an<book-mk-st', 'cw<an<book-mk-en'}:
                     if token_info == 'cw<an<book-mk-st':
                         book_type = 'start'
                     if token_info == 'cw<an<book-mk-en':
                         book_type = 'end'
                     end_bracket_count = bracket_count - 1
                     in_bookmark = 1
-                toc_string += '%s\n' % line
+                toc_string += f'{line}\n'
         return toc_string, book_start_string, book_end_string
 
     def __parse_bookmark_func(self, my_string, type):
@@ -377,8 +372,7 @@ file.
             The type is the name (either bookmark-end or bookmark-start). The
             id is the complete text string.
         """
-        my_changed_string = ('mi<tg<empty-att_<field<type>%s'
-        '<number>%s<update>none\n' % (type, my_string))
+        my_changed_string = f'mi<tg<empty-att_<field<type>{type}<number>{my_string}<update>none\n'
         return my_changed_string
 
     def __found_toc_index_func(self, line, tag):
@@ -413,11 +407,9 @@ file.
             self.__state = 'body'
             type = self.__tag
             if type == 'index':
-                my_string = self.__parse_index_func(
-                self.__text_string)
+                my_string = self.__parse_index_func(self.__text_string)
             elif type == 'toc':
-                my_string = self.__parse_toc_func(
-                self.__text_string)
+                my_string = self.__parse_toc_func(self.__text_string)
             self.__write_obj.write(self.__marker)
             self.__write_obj.write(my_string)
             self.__text_string = ''
@@ -451,9 +443,10 @@ file.
                     if action is None:
                         sys.stderr.write('No matching state in module fields_small.py\n')
                         sys.stderr.write(self.__state + '\n')
-                    action(line)
+                    else:
+                        action(line)
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "fields_small.data")
+            copy_obj.copy_file(self.__write_to, 'fields_small.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)

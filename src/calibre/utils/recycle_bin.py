@@ -1,22 +1,21 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
+import os
+import shutil
+import sys
+import time
 
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import os, shutil, time, sys
-
-from calibre import isbytestring
-from calibre.constants import (iswindows, ismacos, filesystem_encoding,
-        islinux)
+from calibre.constants import filesystem_encoding, islinux, ismacos, iswindows
 
 recycle = None
 
 if iswindows:
-    from calibre.utils.ipc import eintr_retry_call
     from threading import Lock
+
+    from calibre.utils.ipc import eintr_retry_call
     from calibre_extensions import winutil
+
     recycler = None
     rlock = Lock()
 
@@ -24,6 +23,7 @@ if iswindows:
         global recycler
         if recycler is None:
             from calibre.utils.ipc.simple_worker import start_pipe_worker
+
             recycler = start_pipe_worker('from calibre.utils.recycle_bin import recycler_main; recycler_main()')
 
     def recycle_path(path):
@@ -38,15 +38,16 @@ if iswindows:
                 break
             try:
                 path = path.decode('utf-8').rstrip()
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 break
             try:
                 recycle_path(path)
-            except:
+            except Exception:
                 eintr_retry_call(stdout.write, b'KO\n')
                 stdout.flush()
                 try:
                     import traceback
+
                     traceback.print_exc()  # goes to stderr, which is the same as for parent process
                 except Exception:
                     pass  # Ignore failures to write the traceback, since GUI processes on windows have no stderr
@@ -56,9 +57,12 @@ if iswindows:
 
     def delegate_recycle(path):
         if '\n' in path:
-            raise ValueError('Cannot recycle paths that have newlines in them (%r)' % path)
+            raise ValueError(f'Cannot recycle paths that have newlines in them ({path!r})')
         with rlock:
             start_recycler()
+            assert recycler is not None
+            assert recycler.stdin is not None
+            assert recycler.stdout is not None
             recycler.stdin.write(path.encode('utf-8'))
             recycler.stdin.write(b'\n')
             recycler.stdin.flush()
@@ -67,7 +71,7 @@ if iswindows:
             # so I am leaving it as blocking.
             result = eintr_retry_call(recycler.stdout.readline)
             if result.rstrip() != b'OK':
-                raise RuntimeError('recycler failed to recycle: %r' % path)
+                raise RuntimeError(f'recycler failed to recycle: {path!r}')
 
     def recycle(path):
         # We have to run the delete to recycle bin in a separate process as the
@@ -88,18 +92,20 @@ elif ismacos:
     from calibre_extensions.cocoa import send2trash
 
     def osx_recycle(path):
-        if isbytestring(path):
+        if isinstance(path, bytes):
             path = path.decode(filesystem_encoding)
         send2trash(path)
+
     recycle = osx_recycle
 elif islinux:
     from calibre.utils.linux_trash import send2trash
 
     def fdo_recycle(path):
-        if isbytestring(path):
+        if isinstance(path, bytes):
             path = path.decode(filesystem_encoding)
         path = os.path.abspath(path)
         send2trash(path)
+
     recycle = fdo_recycle
 
 can_recycle = callable(recycle)
@@ -116,12 +122,13 @@ def restore_recyle():
 
 
 def delete_file(path, permanent=False):
-    if not permanent and can_recycle:
+    if not permanent and can_recycle and recycle is not None:
         try:
             recycle(path)
             return
-        except:
+        except Exception:
             import traceback
+
             traceback.print_exc()
     os.remove(path)
 
@@ -133,17 +140,19 @@ def delete_tree(path, permanent=False):
             # leading to access errors. If we get an exception, wait and hope
             # that whatever has the file (Antivirus, DropBox?) lets go of it.
             shutil.rmtree(path)
-        except:
+        except Exception:
             import traceback
+
             traceback.print_exc()
             time.sleep(1)
             shutil.rmtree(path)
     else:
-        if can_recycle:
+        if can_recycle and recycle is not None:
             try:
                 recycle(path)
                 return
-            except:
+            except Exception:
                 import traceback
+
                 traceback.print_exc()
         delete_tree(path, permanent=True)

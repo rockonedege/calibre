@@ -1,24 +1,27 @@
 #!/usr/bin/env python
+# License: GPLv3
 
-
-__license__ = 'GPL v3'
-__docformat__ = 'restructuredtext en'
-
-'''
+"""
 Test the CLI of the calibre database management tool
-'''
+"""
+
 import csv
+import os
+import shutil
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 
 from calibre.db.cli.cmd_check_library import _print_check_library_results
-from polyglot.builtins import iteritems
+from calibre.db.cli.cmd_list_categories import do_list
+from calibre.db.constants import NOTES_DB_NAME, NOTES_DIR_NAME
+from calibre.db.tests.base import BaseTest
 from polyglot.io import PolyglotBytesIO
 
 
 class Checker:
-
     def __init__(self, kw):
-        for k, v in iteritems(kw):
+        for k, v in kw.items():
             setattr(self, k, v)
 
 
@@ -50,7 +53,7 @@ class PrintCheckLibraryResultsTest(unittest.TestCase):
         _print_check_library_results(checker, self.check, out=stdout, as_csv=False)
 
         result = stdout.getvalue().decode('utf-8', 'replace').split('\n')
-        self.assertEqual(len(result), len(data)+2)
+        self.assertEqual(len(result), len(data) + 2)
         self.assertEqual(result[0], self.check[1])
 
         result_first = result[1].split('-')[0].strip()
@@ -90,5 +93,293 @@ class PrintCheckLibraryResultsTest(unittest.TestCase):
         self.assertEqual(parsed_result, [[self.check[1], data[0][0], data[0][1]]])
 
 
+class ListCategoriesTest(unittest.TestCase):
+    def test_list_output_is_text(self):
+        data = [{'category': 'Authors', 'tag_count': 3, 'divided': 10}]
+        out = StringIO()
+        with redirect_stdout(out):
+            do_list(['category', 'tag_count', 'divided'], data, None)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[1].split(), ['Authors', '3', '10'])
+
+
+class SetCustomTest(BaseTest):
+    def test_set_custom_append_multiple_values(self):
+        from calibre.db.cli.cmd_set_custom import implementation
+
+        db = self.init_cache()
+        for column, separator, first, second in (
+            ('tags', ',', 'Alpha', 'Beta'),
+            ('authors', '&', 'Doe, Jane', 'Smith, John'),
+        ):
+            field = '#' + column
+            for append, value, expected in (
+                (True, f'{first}{separator}{second}', ('Existing', first, second)),
+                (True, f' Existing {separator} {first}{separator}{first}{separator} ', ('Existing', first)),
+                (True, first, ('Existing', first)),
+                (True, '', ('Existing',)),
+                (False, f'{first}{separator}{second}', (first, second)),
+            ):
+                with self.subTest(column=column, append=append, value=value):
+                    db.set_field(field, {1: ('Existing',)})
+                    ok, msg = implementation(db, None, column, 1, value, append)
+                    self.assertTrue(ok, msg)
+                    self.assertEqual(db.field_for(field, 1), expected)
+
+
+class FTSSearchTest(BaseTest):
+    def run_fts_search(self, db, *args):
+        from calibre.db.cli.cmd_fts_search import implementation, main, option_parser
+        from calibre.db.cli.main import get_parser
+
+        class DBCtx:
+            option_parser = None
+
+            def run(self, name, *args):
+                return implementation(db, None, *args)
+
+        opts, args = option_parser(get_parser, []).parse_args(list(args))
+        with redirect_stdout(StringIO()) as out:
+            main(opts, args, DBCtx())
+        return out.getvalue()
+
+    def test_fts_search_indexing_threshold(self):
+        db = self.init_cache()
+        self.addCleanup(db.close)
+        # the cache fts jobs will index formats, changing the numbers, so disable it
+        db.queue_next_fts_job = lambda *a: None
+        db.enable_fts(start_pool=False)
+        with self.assertRaisesRegex(SystemExit, '3 files out of 3'):
+            self.run_fts_search(db, 'test')
+        self.assertEqual(self.run_fts_search(db, '--indexing-threshold=0', 'test'), '')
+        db.remove_formats({2: ['FMT1']})
+        with self.assertRaisesRegex(SystemExit, '2 files out of 2'):
+            self.run_fts_search(db, 'test')
+        # a library with no files has nothing left to index
+        db.remove_books((1,))
+        self.assertEqual(db.fts_indexing_progress()[:2], (0, 0))
+        self.assertEqual(self.run_fts_search(db, 'test'), '')
+
+
+class NotesTest(BaseTest):
+    def run_notes(self, db, *args, is_remote=False):
+        from calibre.db.cli.cmd_notes import implementation, main, option_parser
+        from calibre.db.cli.main import get_parser
+
+        class DBCtx:
+            option_parser = None
+
+            def __init__(self, is_remote: bool):
+                self.is_remote = is_remote
+
+            def run(self, name, *args):
+                return implementation(db, None, *args)
+
+        dbctx = DBCtx(is_remote)
+        opts, args = option_parser(get_parser, []).parse_args(list(args))
+        with redirect_stdout(StringIO()) as out:
+            main(opts, args, dbctx)
+        return out.getvalue()
+
+    def test_notes(self):
+        db = self.init_cache()
+        self.addCleanup(db.close)
+        self.assertEqual(self.run_notes(db, 'list'), '')
+        path = os.path.join(self.library_path, 'note.html')
+        with open(path, 'w') as f:
+            f.write('<p>A <b>great</b> author</p>')
+        for is_remote in (False, True):
+            with self.subTest(is_remote=is_remote):
+                self.run_notes(db, 'set', 'authors', 'author one', path, is_remote=is_remote)
+                self.assertIn('<b>great</b>', db.notes_for('authors', db.get_item_id('authors', 'Author One')))
+                self.assertEqual(self.run_notes(db, 'show', 'authors', 'Author One').strip(), 'A **great** author')
+        html = self.run_notes(db, 'show', '--as-html', 'authors', 'Author One')
+        self.assertIn('<b>great</b>', html)
+        db.import_note('tags', db.get_item_id('tags', 'Tag One'), html.encode(), path_is_data=True)
+        self.assertEqual(self.run_notes(db, 'list'), 'authors: Author One\ntags: Tag One\n')
+        self.assertEqual(self.run_notes(db, 'list', 'tags'), 'tags: Tag One\n')
+        self.run_notes(db, 'remove', 'tags', 'Tag One')
+        self.assertEqual(self.run_notes(db, 'list'), 'authors: Author One\n')
+        self.assertEqual(self.run_notes(db, 'show', 'tags', 'Tag One'), '')
+        self.assertEqual(self.run_notes(db, 'show', '--as-html', 'tags', 'Tag One'), '')
+        for args, msg in (
+            (('show', 'authors', 'Nobody'), 'No item named Nobody'),
+            (('show', 'title', 'Title One'), 'does not support notes'),
+            (('list', 'rating'), 'does not support notes'),
+            (('frob',), 'not recognized'),
+            (('show', 'authors'), 'must specify a field'),
+            (('set', 'authors', 'Author One'), 'must specify the file'),
+            (('set', 'authors', 'Author One', os.path.join(self.library_path, 'missing.html')), 'Failed to read the note'),
+            (('set', 'authors', 'Author One', path, 'extra'), 'Too many arguments'),
+            (('show', 'authors', 'Author One', 'extra'), 'Too many arguments'),
+            (('list', 'authors', 'tags'), 'at most one field'),
+            ((), 'must specify an action'),
+        ):
+            with self.subTest(args=args), self.assertRaisesRegex(SystemExit, msg):
+                self.run_notes(db, *args)
+
+    def test_notes_server_side_import(self):
+        from calibre.db.cli.cmd_notes import implementation
+
+        db = self.init_cache()
+        self.addCleanup(db.close)
+        img = os.path.join(self.library_path, 'image.png')
+        with open(img, 'wb') as f:
+            f.write(b'\x89PNG\r\n\x1a\n')
+        path = os.path.join(self.library_path, 'note.html')
+        with open(path, 'w') as f:
+            f.write('<p>secret</p><img src="image.png">')
+        author_id = db.get_item_id('authors', 'Author One')
+
+        def notify_changes(*a):
+            pass
+
+        # Paths must never be read on the server
+        ok, err = implementation(db, notify_changes, 'set', 'authors', 'Author One', path, True)
+        self.assertFalse(ok)
+        self.assertIn('Cannot import notes from files on the server', err)
+        self.assertFalse(db.notes_for('authors', author_id))
+        # Images referenced by file paths in HTML data must not be imported,
+        # not even from the calibre temp directory of the server
+        from calibre.ptempfile import base_dir
+
+        tmp_img = os.path.join(base_dir(), 'notes-test-image.png')
+        shutil.copyfile(img, tmp_img)
+        self.addCleanup(os.remove, tmp_img)
+        for src in (img, 'file://' + img.replace(os.sep, '/'), 'image.png', tmp_img, 'notes-test-image.png'):
+            with self.subTest(src=src):
+                ok, err = implementation(db, notify_changes, 'set', 'authors', 'Author One', f'<p>x</p><img src="{src}">'.encode(), False)
+                self.assertTrue(ok)
+                self.assertFalse(db.notes_data_for('authors', author_id)['resource_hashes'])
+        # Locally, images relative to the HTML file are imported
+        ok, err = implementation(db, None, 'set', 'authors', 'Author One', path, True)
+        self.assertTrue(ok)
+        self.assertEqual(len(db.notes_data_for('authors', author_id)['resource_hashes']), 1)
+
+
+class RestoreDatabaseTest(BaseTest):
+    REPORT_NAME = 'calibre_db_restore_report.txt'
+
+    def setUp(self):
+        super().setUp()
+        cache = self.init_cache()
+        cache.dump_metadata()
+        # Only books that have a folder on disk can be restored
+        self.book_dirs = {}
+        for book_id in cache.all_book_ids():
+            book_dir = os.path.join(self.library_path, *cache.field_for('path', book_id).split('/'))
+            if os.path.exists(os.path.join(book_dir, 'metadata.opf')):
+                self.book_dirs[book_id] = book_dir
+        self.assertGreater(len(self.book_dirs), 1)
+        self.all_titles = {book_id: cache.field_for('title', book_id) for book_id in cache.all_book_ids()}
+        self.titles = {book_id: self.all_titles[book_id] for book_id in self.book_dirs}
+        cache.close()
+        self.objects_to_close.remove(cache)
+        # The report is written to the current directory
+        self.cwd = self.mkdtemp()
+        self.prev_cwd = os.getcwd()
+        os.chdir(self.cwd)
+
+    def tearDown(self):
+        os.chdir(self.prev_cwd)
+        super().tearDown()
+
+    def corrupt_opf(self, book_id):
+        with open(os.path.join(self.book_dirs[book_id], 'metadata.opf'), 'wb') as f:
+            f.write(b'not an opf')
+
+    def run_restore(self):
+        from calibre.db.cli.cmd_restore_database import main, option_parser
+        from calibre.db.cli.main import get_parser
+
+        library_path = self.library_path
+
+        class DBCtx:
+            def __init__(self):
+                self.library_path = library_path
+
+        opts, args = option_parser(get_parser, []).parse_args(['--really-do-it'])
+        with redirect_stdout(StringIO()) as out, redirect_stderr(StringIO()) as err:
+            ret = main(opts, args, DBCtx())
+        return ret, out.getvalue(), err.getvalue()
+
+    def restored_titles(self):
+        cache = self.init_cache()
+        return {book_id: cache.field_for('title', book_id) for book_id in cache.all_book_ids()}
+
+    def report_path(self):
+        return os.path.join(self.cwd, self.REPORT_NAME)
+
+    def assert_restore_succeeded(self):
+        ret, out, err = self.run_restore()
+        self.assertEqual(ret, 0, err)
+        self.assertIn('Restoring database succeeded', out)
+        self.assertEqual(err, '')
+        self.assertFalse(os.path.exists(self.report_path()))
+        self.assertTrue(os.path.exists(os.path.join(self.library_path, 'metadata_pre_restore.db')))
+        self.assertEqual(self.restored_titles(), self.titles)
+
+    def test_restore_succeeded(self):
+        self.assert_restore_succeeded()
+
+    def restore_without_notes(self, with_preferences):
+        if with_preferences:
+            cache = self.init_cache()
+            cache.saved_search_add('Restored search', 'title:test')
+            cache.backend.prefs.write_serialized(self.library_path)
+            cache.close()
+            self.objects_to_close.remove(cache)
+        else:
+            self.assertFalse(os.path.exists(os.path.join(self.library_path, 'metadata_db_prefs_backup.json')))
+        notes_path = os.path.join(self.library_path, NOTES_DIR_NAME)
+        shutil.rmtree(notes_path)
+        self.assert_restore_succeeded()
+        self.assertTrue(os.path.isfile(os.path.join(notes_path, NOTES_DB_NAME)))
+        if with_preferences:
+            self.assertEqual(self.init_cache().saved_search_lookup('Restored search'), 'title:test')
+
+    def test_restore_without_notes(self):
+        self.restore_without_notes(with_preferences=False)
+
+    def test_restore_without_notes_with_preferences(self):
+        self.restore_without_notes(with_preferences=True)
+
+    def test_restore_partially_failed(self):
+        bad_id = min(self.titles)
+        self.corrupt_opf(bad_id)
+        ret, out, err = self.run_restore()
+        self.assertEqual(ret, 2, err)
+        self.assertIn('Restoring database succeeded', out)
+        self.assertIn(self.REPORT_NAME, err)
+        with open(self.report_path(), encoding='utf-8') as f:
+            self.assertIn(self.book_dirs[bad_id], f.read())
+        expected = dict(self.titles)
+        del expected[bad_id]
+        self.assertEqual(self.restored_titles(), expected)
+
+    def test_restore_failed(self):
+        for book_id in self.titles:
+            self.corrupt_opf(book_id)
+        ret, out, err = self.run_restore()
+        self.assertEqual(ret, 1, out)
+        self.assertNotIn('Restoring database succeeded', out)
+        self.assertIn('Restoring database failed', err)
+        # Each failed folder must be reported exactly once
+        for book_dir in self.book_dirs.values():
+            self.assertEqual(err.count(f'Failed to restore: {book_dir}\n'), 1, err)
+        self.assertFalse(os.path.exists(self.report_path()))
+        # The original database must be left untouched
+        self.assertFalse(os.path.exists(os.path.join(self.library_path, 'metadata_pre_restore.db')))
+        self.assertEqual(self.restored_titles(), self.all_titles)
+
+
 def find_tests():
-    return unittest.defaultTestLoader.loadTestsFromTestCase(PrintCheckLibraryResultsTest)
+    loader = unittest.defaultTestLoader
+    return unittest.TestSuite((
+        loader.loadTestsFromTestCase(PrintCheckLibraryResultsTest),
+        loader.loadTestsFromTestCase(ListCategoriesTest),
+        loader.loadTestsFromTestCase(SetCustomTest),
+        loader.loadTestsFromTestCase(FTSSearchTest),
+        loader.loadTestsFromTestCase(NotesTest),
+        loader.loadTestsFromTestCase(RestoreDatabaseTest),
+    ))

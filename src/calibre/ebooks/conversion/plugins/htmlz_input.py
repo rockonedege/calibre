@@ -1,23 +1,21 @@
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
 
 import os
 
 from calibre import guess_type
 from calibre.customize.conversion import InputFormatPlugin
+from calibre.ebooks.conversion.plugins.archive_input import archive_file_data
+from calibre.utils.localization import _
 
 
 class HTMLZInput(InputFormatPlugin):
-
-    name        = 'HTLZ Input'
-    author      = 'John Schember'
+    name = 'HTLZ Input'
+    author = 'John Schember'
     description = _('Convert HTMLZ files to HTML')
-    file_types  = {'htmlz'}
+    file_types = {'htmlz'}
     commit_name = 'htmlz_input'
 
-    def convert(self, stream, options, file_ext, log,
-                accelerators):
+    def convert(self, stream, options, file_ext, log, accelerators):
         from calibre.ebooks.chardet import xml_to_unicode
         from calibre.ebooks.metadata.opf2 import OPF
         from calibre.utils.zipfile import ZipFile
@@ -33,7 +31,7 @@ class HTMLZInput(InputFormatPlugin):
         # Find the HTML file in the archive. It needs to be
         # top level.
         index = ''
-        multiple_html = False
+        multiple_html = []
         # Get a list of all top level files in the archive.
         for x in os.listdir('.'):
             if os.path.isfile(x):
@@ -51,14 +49,16 @@ class HTMLZInput(InputFormatPlugin):
                 # called index.
                 if not index:
                     index = x
-                else:
-                    multiple_html = True
+                elif x != index:
+                    if not multiple_html:
+                        multiple_html = [index]
+                    multiple_html.append(x)
         # Warn the user if there multiple HTML file in the archive. HTMLZ
         # supports a single HTML file. A conversion with a multiple HTML file
         # HTMLZ archive probably won't turn out as the user expects. With
         # Multiple HTML files ZIP input should be used in place of HTMLZ.
         if multiple_html:
-            log.warn(_('Multiple HTML files found in the archive. Only %s will be used.') % index)
+            log.warn(_('Multiple HTML files found in the archive {0}. Only {1} will be used.').format(', '.join(multiple_html), index))
 
         if index:
             with open(index, 'rb') as tf:
@@ -78,6 +78,7 @@ class HTMLZInput(InputFormatPlugin):
 
         # Run the HTML through the html processing plugin.
         from calibre.customize.ui import plugin_for_input_format
+
         html_input = plugin_for_input_format('html')
         for opt in html_input.options:
             setattr(options, opt.option.name, opt.recommended_value)
@@ -87,21 +88,21 @@ class HTMLZInput(InputFormatPlugin):
         c = 0
         while os.path.exists(htmlfile):
             c += 1
-            htmlfile = 'index%d.html'%c
+            htmlfile = f'index{c}.html'
         with open(htmlfile, 'wb') as f:
             f.write(html.encode('utf-8'))
         odi = options.debug_pipeline
         options.debug_pipeline = None
         # Generate oeb from html conversion.
         with open(htmlfile, 'rb') as f:
-            oeb = html_input.convert(f, options, 'html', log,
-                {})
+            oeb = html_input.convert(f, options, 'html', log, {})
         options.debug_pipeline = odi
         os.remove(htmlfile)
 
         # Set metadata from file.
         from calibre.customize.ui import get_file_type_metadata
         from calibre.ebooks.oeb.transforms.metadata import meta_info_to_oeb_metadata
+
         mi = get_file_type_metadata(stream, file_ext)
         meta_info_to_oeb_metadata(mi, oeb.metadata, log)
 
@@ -113,16 +114,16 @@ class HTMLZInput(InputFormatPlugin):
                 opf = x
                 break
         if opf:
-            opf = OPF(opf, basedir=os.getcwd())
-            cover_path = opf.raster_cover or opf.cover
+            opf_parsed = OPF(opf, basedir=os.getcwd())
+            cover_path = opf_parsed.raster_cover or opf_parsed.cover
+            os.remove(opf)  # don't confuse code that searches for OPF files later on the oeb object will create its own OPF
         # Set the cover.
         if cover_path:
-            cdata = None
-            with open(os.path.join(os.getcwd(), cover_path), 'rb') as cf:
-                cdata = cf.read()
-            cover_name = os.path.basename(cover_path)
-            id, href = oeb.manifest.generate('cover', cover_name)
-            oeb.manifest.add(id, href, guess_type(cover_name)[0], data=cdata)
-            oeb.guide.add('cover', 'Cover', href)
+            cover_data = archive_file_data(os.getcwd(), cover_path)
+            if cover_data is not None:
+                cover_name, cdata = cover_data
+                id, href = oeb.manifest.generate('cover', cover_name)
+                oeb.manifest.add(id, href, guess_type(cover_name)[0], data=cdata)
+                oeb.guide.add('cover', 'Cover', href)
 
         return oeb

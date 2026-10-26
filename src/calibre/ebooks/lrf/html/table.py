@@ -1,22 +1,23 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
-import math, sys, re, numbers
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
+
+import math
+import numbers
+import re
+import sys
 
 from calibre.ebooks.lrf.fonts import get_font
-from calibre.ebooks.lrf.pylrs.pylrs import TextBlock, Text, CR, Span, \
-                                             CharButton, Plot, Paragraph, \
-                                             LrsTextTag
-from polyglot.builtins import string_or_bytes, native_string_type
+from calibre.ebooks.lrf.pylrs.pylrs import CR, CharButton, LrsTextTag, Paragraph, Plot, Span, Text, TextBlock
 
 
 def ceil(num):
-    return int(math.ceil(num))
+    return math.ceil(num)
 
 
 def print_xml(elem):
-    from calibre.ebooks.lrf.pylrs.pylrs import ElementWriter
-    elem = elem.toElement(native_string_type('utf8'))
-    ew = ElementWriter(elem, sourceEncoding=native_string_type('utf8'))
+    from calibre.ebooks.lrf.pylrs.elements import ElementWriter
+
+    elem = elem.toElement('utf8')
+    ew = ElementWriter(elem, sourceEncoding='utf8')
     ew.write(sys.stdout)
     print()
 
@@ -28,17 +29,18 @@ def cattrs(base, extra):
 
 
 def tokens(tb):
-    '''
+    """
     Return the next token. A token is :
     1. A string
     a block of text that has the same style
-    '''
+    """
+
     def process_element(x, attrs):
         if isinstance(x, CR):
             yield 2, None
         elif isinstance(x, Text):
             yield x.text, cattrs(attrs, {})
-        elif isinstance(x, string_or_bytes):
+        elif isinstance(x, (str, bytes)):
             yield x, cattrs(attrs, {})
         elif isinstance(x, (CharButton, LrsTextTag)):
             if x.contents:
@@ -65,13 +67,12 @@ def tokens(tb):
 
 
 class Cell:
-
     def __init__(self, conv, tag, css):
         self.conv = conv
         self.tag = tag
-        self.css  = css
+        self.css = css
         self.text_blocks = []
-        self.pwidth = -1.
+        self.pwidth = -1.0
         if tag.has_attr('width') and '%' in tag['width']:
             try:
                 self.pwidth = float(tag['width'].replace('%', ''))
@@ -88,7 +89,7 @@ class Cell:
         try:
             self.colspan = int(tag['colspan']) if tag.has_attr('colspan') else 1
             self.rowspan = int(tag['rowspan']) if tag.has_attr('rowspan') else 1
-        except:
+        except Exception:
             pass
 
         pp = conv.current_page
@@ -107,7 +108,7 @@ class Cell:
             self.text_blocks.append(tb)
         for tb in self.text_blocks:
             tb.parent = None
-            tb.objId  = 0
+            tb.objId = 0
             # Needed as we have to eventually change this BlockStyle's width and
             # height attributes. This blockstyle may be shared with other
             # elements, so doing that causes havoc.
@@ -121,7 +122,7 @@ class Cell:
 
     def pts_to_pixels(self, pts):
         pts = int(pts)
-        return ceil((float(self.conv.profile.dpi)/72)*(pts/10))
+        return ceil((float(self.conv.profile.dpi) / 72) * (pts / 10))
 
     def minimum_width(self):
         return max(self.minimum_tb_width(tb) for tb in self.text_blocks)
@@ -144,10 +145,10 @@ class Cell:
             if not token.strip():
                 continue
             word = token.split()
-            word = word[0] if word else ""
-            width = font.getsize(word)[0]
-            if width > mwidth:
-                mwidth = width
+            word = word[0] if word else ''
+            fl, ft, fr, fb = font.getbbox(word)
+            width = fr - fl
+            mwidth = max(mwidth, width)
         return parindent + mwidth + 2
 
     def text_block_size(self, tb, maxwidth=sys.maxsize, debug=False):
@@ -160,19 +161,18 @@ class Cell:
             if left + width > maxwidth:
                 left = width + ws
                 top += ls
-                bottom = top+ls if top+ls > bottom else bottom
+                bottom = max(bottom, top + ls)
             else:
-                left += (width + ws)
-                right = left if left > right else right
-                bottom = top+ls if top+ls > bottom else bottom
+                left += width + ws
+                right = max(right, left)
+                bottom = max(bottom, top + ls)
             return left, right, top, bottom
 
         for token, attrs in tokens(tb):
             if attrs is None:
                 attrs = {}
             font = default_font
-            ls = self.pts_to_pixels(attrs.get('baselineskip', ts['baselineskip']))+\
-                 self.pts_to_pixels(attrs.get('linespace', ts['linespace']))
+            ls = self.pts_to_pixels(attrs.get('baselineskip', ts['baselineskip'])) + self.pts_to_pixels(attrs.get('linespace', ts['linespace']))
             ws = self.pts_to_pixels(attrs.get('wordspace', ts['wordspace']))
             if isinstance(token, numbers.Integral):  # Handle para and line breaks
                 if top != bottom:  # Previous element not a line break
@@ -180,7 +180,7 @@ class Cell:
                 else:
                     top += ls
                     bottom += ls
-                left = parindent if int == 1 else 0
+                left = 0
                 continue
             if isinstance(token, Plot):
                 width, height = self.pts_to_pixels(token.xsize), self.pts_to_pixels(token.ysize)
@@ -191,9 +191,10 @@ class Cell:
             if (ff, fs) != (ts['fontfacename'], ts['fontsize']):
                 font = get_font(ff, self.pts_to_pixels(fs))
             for word in token.split():
-                width, height = font.getsize(word)
+                fl, ft, fr, fb = font.getbbox(word)
+                width, height = fr - fl, abs(fb - ft)
                 left, right, top, bottom = add_word(width, height, left, right, top, bottom, ls, ws)
-        return right+3+max(parindent, 10), bottom
+        return right + 3 + max(parindent, 10), bottom
 
     def text_block_preferred_width(self, tb, debug=False):
         return self.text_block_size(tb, sys.maxsize, debug=debug)[0]
@@ -206,11 +207,10 @@ class Cell:
 
 
 class Row:
-
     def __init__(self, conv, row, css, colpad):
         self.cells = []
         self.colpad = colpad
-        cells = row.findAll(re.compile('td|th', re.IGNORECASE))
+        cells = row.findAll(re.compile(r'td|th', re.IGNORECASE))
         self.targets = []
         for cell in cells:
             ccss = conv.tag_css(cell, css)[0]
@@ -221,7 +221,7 @@ class Row:
                 self.targets.append(name.replace('#', ''))
 
     def number_of_cells(self):
-        '''Number of cells in this row. Respects colspan'''
+        """Number of cells in this row. Respects colspan"""
         ans = 0
         for cell in self.cells:
             ans += cell.colspan
@@ -230,7 +230,7 @@ class Row:
     def height(self, widths):
         i, heights = 0, []
         for cell in self.cells:
-            width = sum(widths[i:i+cell.colspan])
+            width = sum(widths[i : i + cell.colspan])
             heights.append(cell.height(width))
             i += cell.colspan
         if not heights:
@@ -241,7 +241,7 @@ class Row:
         i = -1
         cell = None
         for cell in self.cells:
-            for k in range(0, cell.colspan):
+            for k in range(cell.colspan):
                 if i == col:
                     break
                 i += 1
@@ -272,7 +272,6 @@ class Row:
 
 
 class Table:
-
     def __init__(self, conv, table, css, rowpad=10, colpad=10):
         self.rows = []
         self.conv = conv
@@ -286,16 +285,16 @@ class Table:
         conv.in_table = False
 
     def number_of_columns(self):
-        max = 0
+        val = 0
         for row in self.rows:
-            max = row.number_of_cells() if row.number_of_cells() > max else max
-        return max
+            val = max(val, row.number_of_cells())
+        return val
 
     def number_or_rows(self):
         return len(self.rows)
 
     def height(self, maxwidth):
-        ''' Return row heights + self.rowpad'''
+        """Return row heights + self.rowpad"""
         widths = self.get_widths(maxwidth)
         return sum(row.height(widths) + self.rowpad for row in self.rows) - self.rowpad
 
@@ -306,9 +305,9 @@ class Table:
         return max(row.width_percent(col) for row in self.rows)
 
     def get_widths(self, maxwidth):
-        '''
+        """
         Return widths of columns + self.colpad
-        '''
+        """
         rows, cols = self.number_or_rows(), self.number_of_columns()
         widths = list(range(cols))
         for c in range(cols):
@@ -320,21 +319,20 @@ class Table:
                     continue
             widths[c] = max(cellwidths)
 
-        min_widths = [self.minimum_width(i)+10 for i in range(cols)]
+        min_widths = [self.minimum_width(i) + 10 for i in range(cols)]
         for i in range(len(widths)):
             wp = self.width_percent(i)
             if wp >= 0:
-                widths[i] = max(min_widths[i], ceil((wp/100) * (maxwidth - (cols-1)*self.colpad)))
+                widths[i] = max(min_widths[i], ceil((wp / 100) * (maxwidth - (cols - 1) * self.colpad)))
 
         itercount = 0
 
-        while sum(widths) > maxwidth-((len(widths)-1)*self.colpad) and itercount < 100:
+        while sum(widths) > maxwidth - ((len(widths) - 1) * self.colpad) and itercount < 100:
             for i in range(cols):
-                widths[i] = ceil((95/100)*widths[i]) if \
-                    ceil((95/100)*widths[i]) >= min_widths[i] else widths[i]
+                widths[i] = ceil((95 / 100) * widths[i]) if ceil((95 / 100) * widths[i]) >= min_widths[i] else widths[i]
             itercount += 1
 
-        return [i+self.colpad for i in widths]
+        return [i + self.colpad for i in widths]
 
     def blocks(self, maxwidth, maxheight):
         rows, cols = self.number_or_rows(), self.number_of_columns()
@@ -349,7 +347,7 @@ class Table:
                     rowpos[r] += cell.colspan
                     for k in range(1, cell.rowspan):
                         try:
-                            rowpos[r+k] += 1
+                            rowpos[r + k] += 1
                         except IndexError:
                             break
             except StopIteration:  # No more cells in this row
@@ -360,21 +358,17 @@ class Table:
 
         xpos = [sum(widths[:i]) for i in range(cols)]
         delta = maxwidth - sum(widths)
-        if delta < 0:
-            delta = 0
+        delta = max(delta, 0)
         for r in range(len(cellmatrix)):
             yield None, 0, heights[r], 0, self.rows[r].targets
             for c in range(len(cellmatrix[r])):
                 cell = cellmatrix[r][c]
                 if not cell:
                     continue
-                width = sum(widths[c:c+cell.colspan])-self.colpad*cell.colspan
+                width = sum(widths[c : c + cell.colspan]) - self.colpad * cell.colspan
                 sypos = 0
                 for tb in cell.text_blocks:
-                    tb.blockStyle = self.conv.book.create_block_style(
-                                    blockwidth=width,
-                                    blockheight=cell.text_block_size(tb, width)[1],
-                                    blockrule='horz-fixed')
+                    tb.blockStyle = self.conv.book.create_block_style(blockwidth=width, blockheight=cell.text_block_size(tb, width)[1], blockrule='horz-fixed')
 
                     yield tb, xpos[c], sypos, delta, None
                     sypos += tb.blockStyle.attrs['blockheight']

@@ -1,54 +1,59 @@
 #!/usr/bin/env python
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
 # Setup code {{{
 import codecs
 import sys
 import threading
+from functools import lru_cache
+from typing import Literal, overload
 
 from calibre.utils.config_base import prefs, tweaks
 from calibre_extensions import icu as _icu
 from polyglot.builtins import cmp
 
 _locale = None
-cmp
 
 _none = ''
 _none2 = b''
 _cmap = {}
 
 icu_unicode_version = _icu.unicode_version
-_nmodes = {m:getattr(_icu, m) for m in ('NFC', 'NFD', 'NFKC', 'NFKD')}
+_nmodes = {m: getattr(_icu, m) for m in ('NFC', 'NFD', 'NFKC', 'NFKD')}
 
 
 # Ensure that the python internal filesystem and default encodings are not ASCII
 def is_ascii(name):
     try:
         return codecs.lookup(name).name == b'ascii'
-    except (TypeError, LookupError):
+    except TypeError, LookupError:
         return True
 
 
 try:
     if is_ascii(sys.getdefaultencoding()):
         _icu.set_default_encoding(b'utf-8')
-except:
+except Exception:
     import traceback
+
     traceback.print_exc()
 
 try:
     if is_ascii(sys.getfilesystemencoding()):
         _icu.set_filesystem_encoding(b'utf-8')
-except:
+except Exception:
     import traceback
+
     traceback.print_exc()
 del is_ascii
 
 
-thread_local_collator_cache = threading.local()
+class ThreadLocalCollatorCache(threading.local):
+    def __init__(self):
+        self.cache = {}
+
+
+thread_local_collator_cache = ThreadLocalCollatorCache()
 
 
 def collator(strength=None, numeric=None, ignore_alternate_chars=None, upper_first=None):
@@ -57,15 +62,11 @@ def collator(strength=None, numeric=None, ignore_alternate_chars=None, upper_fir
         if tweaks['locale_for_sorting']:
             _locale = tweaks['locale_for_sorting']
         else:
-            from calibre.utils.localization import get_lang
-            _locale = get_lang()
+            from calibre.utils.localization import bcp47_locale_name
+
+            _locale = bcp47_locale_name()
     key = strength, numeric, ignore_alternate_chars, upper_first
-    try:
-        ans = thread_local_collator_cache.cache.get(key)
-    except AttributeError:
-        thread_local_collator_cache.cache = {}
-        ans = None
-    if ans is not None:
+    if (ans := thread_local_collator_cache.cache.get(key)) is not None:
         return ans
     if all(x is None for x in key):
         try:
@@ -83,10 +84,7 @@ def collator(strength=None, numeric=None, ignore_alternate_chars=None, upper_fir
         if upper_first is not None:
             ans.upper_first = upper_first
         if ignore_alternate_chars is not None:
-            try:
-                ans.set_attribute(_icu.UCOL_ALTERNATE_HANDLING, _icu.UCOL_SHIFTED if ignore_alternate_chars else _icu.UCOL_NON_IGNORABLE)
-            except AttributeError:
-                pass  # people running from source without latest binary
+            ans.set_attribute(_icu.UCOL_ALTERNATE_HANDLING, _icu.UCOL_SHIFTED if ignore_alternate_chars else _icu.UCOL_NON_IGNORABLE)
 
     thread_local_collator_cache.cache[key] = ans
     return ans
@@ -95,6 +93,8 @@ def collator(strength=None, numeric=None, ignore_alternate_chars=None, upper_fir
 def change_locale(locale=None):
     global _locale
     _locale = locale
+    _ascii_no_punc_tables.clear()
+    ascii_primary_no_punc_matcher.cache_clear()
     try:
         thread_local_collator_cache.cache.clear()
     except AttributeError:
@@ -102,32 +102,32 @@ def change_locale(locale=None):
 
 
 def primary_collator():
-    'Ignores case differences and accented chars'
+    "Ignores case differences and accented chars"
     return collator(strength=_icu.UCOL_PRIMARY)
 
 
 def primary_collator_without_punctuation():
-    'Ignores space and punctuation and case differences and accented chars'
+    "Ignores space and punctuation and case differences and accented chars"
     return collator(strength=_icu.UCOL_PRIMARY, ignore_alternate_chars=True)
 
 
 def sort_collator():
-    'Ignores case differences and recognizes numbers in strings (if the tweak is set)'
+    "Ignores case differences and recognizes numbers in strings (if the tweak is set)"
     return collator(strength=_icu.UCOL_SECONDARY, numeric=prefs['numeric_collation'])
 
 
 def non_numeric_sort_collator():
-    'Ignores case differences only'
+    "Ignores case differences only"
     return collator(strength=_icu.UCOL_SECONDARY, numeric=False)
 
 
 def numeric_collator():
-    'Uses natural sorting for numbers inside strings so something2 will sort before something10'
+    "Uses natural sorting for numbers inside strings so something2 will sort before something10"
     return collator(strength=_icu.UCOL_SECONDARY, numeric=True)
 
 
 def case_sensitive_collator():
-    'Always sorts upper case letter before lower case'
+    "Always sorts upper case letter before lower case"
     return collator(numeric=prefs['numeric_collation'], upper_first=True)
 
 
@@ -183,7 +183,7 @@ def make_two_arg_func(collator_function, func_name='strcmp'):
     return two_args
 
 
-def make_change_case_func(which):
+def make_change_case_func(which, name):
 
     def change_case(x):
         try:
@@ -201,9 +201,12 @@ def make_change_case_func(which):
                     return x
                 return _icu.change_case(x, which, _locale)
             raise
-    return change_case
-# }}}
 
+    change_case.__name__ = name
+    return change_case
+
+
+# }}}
 
 # ################ The string functions ########################################
 sort_key = make_sort_key_func(sort_collator)
@@ -216,22 +219,19 @@ collation_order_for_partitioning = make_sort_key_func(non_numeric_sort_collator,
 strcmp = make_two_arg_func(sort_collator)
 case_sensitive_strcmp = make_two_arg_func(case_sensitive_collator)
 primary_strcmp = make_two_arg_func(primary_collator)
-upper = make_change_case_func(_icu.UPPER_CASE)
-lower = make_change_case_func(_icu.LOWER_CASE)
-title_case = make_change_case_func(_icu.TITLE_CASE)
+upper = make_change_case_func(_icu.UPPER_CASE, 'upper')
+lower = make_change_case_func(_icu.LOWER_CASE, 'lower')
+title_case = make_change_case_func(_icu.TITLE_CASE, 'title_case')
 
 
 def capitalize(x):
     try:
         return upper(x[0]) + lower(x[1:])
-    except (IndexError, TypeError, AttributeError):
+    except IndexError, TypeError, AttributeError:
         return x
 
 
-try:
-    swapcase = _icu.swap_case
-except AttributeError:  # For people running from source
-    swapcase = lambda x:x.swapcase()
+swapcase = swap_case = _icu.swap_case
 
 find = make_two_arg_func(collator, 'find')
 primary_find = make_two_arg_func(primary_collator, 'find')
@@ -239,23 +239,78 @@ primary_no_punc_find = make_two_arg_func(primary_collator_without_punctuation, '
 contains = make_two_arg_func(collator, 'contains')
 primary_contains = make_two_arg_func(primary_collator, 'contains')
 primary_no_punc_contains = make_two_arg_func(primary_collator_without_punctuation, 'contains')
+_ascii_no_punc_tables = {}
+
+
+def _build_ascii_no_punc_table():
+    # Use the collator itself to find out which ASCII characters it ignores
+    # and verify that for ASCII text it otherwise behaves as a simple case
+    # insensitive comparison, which is not true for all locales, for example,
+    # those with contractions such as ch or special casing such as Turkish i.
+    try:
+        if any(len(c) > 1 and c.isascii() for c in contractions()):
+            return None
+        func = primary_collator_without_punctuation().contains
+        # NULL must be included, the collator treats it as ignorable
+        chars = tuple(map(chr, range(128)))
+        ignored = frozenset(c for c in chars if func('ab', f'a{c}b') and func('xy', f'x{c}y'))
+        significant = tuple(c for c in chars if c not in ignored)
+        for a in significant:
+            if not func(a, a):
+                return None
+            for b in significant:
+                if func(a, b) != (a.lower() == b.lower()):
+                    return None
+    except Exception:
+        return None
+    return {ord(c): None for c in ignored}
+
+
+@lru_cache(maxsize=64)
+def ascii_primary_no_punc_matcher(query):
+    """
+    Return a function f(text) that gives the same result as
+    primary_no_punc_contains(query, text) but is much faster. It must be
+    called only with text for which text.isascii() is True. Returns None if no
+    such function exists for this query and the current locale.
+    """
+    if not query.isascii():
+        return None
+    collator()  # sets _locale
+    try:
+        table = _ascii_no_punc_tables[_locale]
+    except KeyError:
+        table = _ascii_no_punc_tables[_locale] = _build_ascii_no_punc_table()
+    if table is None:
+        return None
+    q = query.lower().translate(table)
+    if not q:
+        return None
+
+    def matcher(text):
+        return q in text.lower().translate(table)
+
+    return matcher
+
+
 startswith = make_two_arg_func(collator, 'startswith')
 primary_startswith = make_two_arg_func(primary_collator, 'startswith')
 safe_chr = _icu.chr
 ord_string = _icu.ord_string
+word_prefix_find = _icu.word_prefix_find
 
 
 def character_name(string):
     try:
         return _icu.character_name(str(string)) or None
-    except (TypeError, ValueError, KeyError):
+    except TypeError, ValueError, KeyError:
         pass
 
 
 def character_name_from_code(code):
     try:
         return _icu.character_name_from_code(code) or ''
-    except (TypeError, ValueError, KeyError):
+    except TypeError, ValueError, KeyError:
         return ''
 
 
@@ -278,15 +333,16 @@ def contractions(col=None):
     return ans
 
 
-def partition_by_first_letter(items, reverse=False, key=lambda x:x):
+def partition_by_first_letter(items, reverse=False, key=lambda x: x):
     # Build a list of 'equal' first letters by noticing changes
     # in ICU's 'ordinal' for the first letter.
     from collections import OrderedDict
-    items = sorted(items, key=lambda x:sort_key(key(x)), reverse=reverse)
+
+    items = sorted(items, key=lambda x: sort_key(key(x)), reverse=reverse)
     ans = OrderedDict()
     last_c, last_ordnum = ' ', 0
     for item in items:
-        c = icu_upper(key(item) or ' ')
+        c = upper(key(item) or ' ')
         ordnum, ordlen = collation_order(c)
         if last_ordnum != ordnum:
             last_c = c[0:1]
@@ -308,30 +364,76 @@ utf16_length = _icu.utf16_length
 def remove_accents_icu(txt: str) -> str:
     t = getattr(remove_accents_icu, 'transliterator', None)
     if t is None:
-        t = _icu.Transliterator('remove_accents', '''\
+        t = _icu.Transliterator(
+            'remove_accents',
+            '''\
 :: NFD (NFC);
 :: [:Nonspacing Mark:] Remove;
 :: NFC (NFD);
-''')
+''',
+        )
         setattr(remove_accents_icu, 'transliterator', t)
     return t.transliterate(txt)
 
 
+_remove_accents_pat = None
+
+
 def remove_accents_regex(txt: str) -> str:
-    pat = getattr(remove_accents_regex, 'pat', None)
-    if pat is None:
+    global _remove_accents_pat
+    import unicodedata
+
+    if _remove_accents_pat is None:
         import regex
-        import unicodedata
-        pat = regex.compile(r'\p{Mn}', flags=regex.UNICODE)
-        setattr(remove_accents_regex, 'pat', pat)
-        setattr(remove_accents_regex, 'normalize', unicodedata.normalize)
-    normalize = remove_accents_regex.normalize
-    return normalize('NFKC', pat.sub('', normalize('NFKD', txt)))
+
+        _remove_accents_pat = regex.compile(r'\p{Mn}', flags=regex.UNICODE)
+    return unicodedata.normalize('NFKC', _remove_accents_pat.sub('', unicodedata.normalize('NFKD', txt)))
 
 
 remove_accents = remove_accents_regex  # more robust and faster
 
+
+@overload
+def visual_to_logical(text: str, want_map: Literal[False] = False) -> str: ...
+
+
+@overload
+def visual_to_logical(text: str, want_map: Literal[True]) -> tuple[str, tuple[int, ...]]: ...
+
+
+def visual_to_logical(text: str, want_map: bool = False) -> str | tuple[str, tuple[int, ...]]:
+    """
+    Convert text that is in visual order, that is, in the order the glyphs are
+    painted from left to right, into logical (storage) order, running the
+    inverse of the Unicode bidirectional algorithm and mirroring characters
+    such as brackets. Text in left-to-right scripts is returned unchanged.
+
+    If want_map is True returns (text, index_map) where index_map[i] is the
+    index in the input of the character at index i of the output, or -1 if
+    there is no such character.
+    """
+    return _icu.bidi_reorder(text, True, want_map)
+
+
+@overload
+def logical_to_visual(text: str, want_map: Literal[False] = False) -> str: ...
+
+
+@overload
+def logical_to_visual(text: str, want_map: Literal[True]) -> tuple[str, tuple[int, ...]]: ...
+
+
+def logical_to_visual(text: str, want_map: bool = False) -> str | tuple[str, tuple[int, ...]]:
+    """
+    Convert text from logical (storage) order into visual order, that is, the
+    order in which the glyphs are painted from left to right. This is what a
+    renderer does when displaying text. See visual_to_logical() for want_map.
+    """
+    return _icu.bidi_reorder(text, False, want_map)
+
+
 ################################################################################
 if __name__ == '__main__':
     from calibre.utils.icu_test import run
+
     run(verbosity=4)

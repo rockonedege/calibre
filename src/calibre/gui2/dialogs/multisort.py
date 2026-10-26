@@ -1,33 +1,29 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2021, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-from qt.core import (
-    QAbstractItemView, QDialogButtonBox, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QMenu, QSize, Qt, QVBoxLayout
-)
+from qt.core import QAbstractItemView, QDialogButtonBox, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu, QSize, Qt, QVBoxLayout
 
 from calibre import prepare_string_for_xml
 from calibre.gui2 import error_dialog
 from calibre.gui2.actions.sort import SORT_HIDDEN_PREF
 from calibre.gui2.widgets2 import Dialog
 from calibre.utils.icu import primary_sort_key
+from calibre.utils.localization import _
 
 ascending_symbol = '⏷'
 descending_symbol = '⏶'
 
 
 class ChooseMultiSort(Dialog):
-
     def __init__(self, db, is_device_connected=False, parent=None, hidden_pref=SORT_HIDDEN_PREF):
         self.db = db.new_api
-        self.hidden_fields = set(self.db.pref(SORT_HIDDEN_PREF, default=()) or ())
+        self.hidden_fields: set[str] = set(self.db.pref(SORT_HIDDEN_PREF, default=()) or ())
         if not is_device_connected:
             self.hidden_fields.add('ondevice')
         fm = self.db.field_metadata
         self.key_map = fm.ui_sortable_field_keys().copy()
-        self.name_map = {v:k for k, v in self.key_map.items()}
-        self.all_names = sorted(self.name_map, key=primary_sort_key)
+        name_map = [(v, k) for k, v in self.key_map.items()]
+        self.name_map = sorted(name_map, key=lambda x: primary_sort_key(x[0]))
         self.sort_order_map = dict.fromkeys(self.key_map, True)
         super().__init__(_('Sort by multiple columns'), 'multisort-chooser', parent=parent)
 
@@ -36,10 +32,13 @@ class ChooseMultiSort(Dialog):
 
     def setup_ui(self):
         self.vl = vl = QVBoxLayout(self)
-        self.la = la = QLabel(_(
-            'Pick multiple columns to sort by. Drag and drop to re-arrange. Higher columns are more important.'
-            ' Ascending or descending order can be toggled by clicking the column name at the bottom'
-            ' of this dialog, after having selected it.'))
+        self.la = la = QLabel(
+            _(
+                'Pick multiple columns to sort by. Drag and drop to re-arrange. Higher columns are more important.'
+                ' Ascending or descending order can be toggled by clicking the column name at the bottom'
+                ' of this dialog, after having selected it.'
+            )
+        )
         la.setWordWrap(True)
         vl.addWidget(la)
         self.order_label = la = QLabel('\xa0')
@@ -51,32 +50,37 @@ class ChooseMultiSort(Dialog):
         vl.addWidget(cl)
         vl.addWidget(la)
         vl.addWidget(self.bb)
-        for name in self.all_names:
+        for name, field in self.name_map:
             i = QListWidgetItem(cl)
             i.setText(name)
-            i.setData(Qt.ItemDataRole.UserRole, self.name_map[name])
+            i.setData(Qt.ItemDataRole.UserRole, field)
             cl.addItem(i)
             i.setCheckState(Qt.CheckState.Unchecked)
-            if self.name_map[name] in self.hidden_fields:
+            if field in self.hidden_fields:
                 i.setHidden(True)
         cl.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         cl.currentRowChanged.connect(self.current_changed)
         cl.itemDoubleClicked.connect(self.item_double_clicked)
         cl.setCurrentRow(0)
         cl.itemChanged.connect(self.update_order_label)
-        cl.model().rowsMoved.connect(self.update_order_label)
+        cl_model = cl.model()
+        assert cl_model is not None
+        cl_model.rowsMoved.connect(self.update_order_label)
 
         self.clear_button = b = self.bb.addButton(_('&Clear'), QDialogButtonBox.ButtonRole.ActionRole)
+        assert b is not None
         b.setToolTip(_('Clear all selected columns'))
         b.setAutoDefault(False)
         b.clicked.connect(self.clear)
 
         self.save_button = b = self.bb.addButton(_('&Save'), QDialogButtonBox.ButtonRole.ActionRole)
+        assert b is not None
         b.setToolTip(_('Save this sort order for easy re-use'))
         b.clicked.connect(self.save)
         b.setAutoDefault(False)
 
         self.load_button = b = self.bb.addButton(_('&Load'), QDialogButtonBox.ButtonRole.ActionRole)
+        assert b is not None
         b.setToolTip(_('Load previously saved settings'))
         b.setAutoDefault(False)
         self.load_menu = QMenu(b)
@@ -111,7 +115,7 @@ class ChooseMultiSort(Dialog):
             if i != 0:
                 t += ' :: '
             q = bytes.hex(k.encode('utf-8'))
-            dname = prepare_string_for_xml(name).replace(" ", "&nbsp;")
+            dname = prepare_string_for_xml(name).replace(' ', '&nbsp;')
             t += f' <a href="{q}" style="text-decoration: none">{dname}&nbsp;{symbol}</a>'
         if t:
             t = _('Effective sort') + ': ' + t
@@ -123,8 +127,7 @@ class ChooseMultiSort(Dialog):
         self.update_order_label()
 
     def no_column_selected_error(self):
-        return error_dialog(self, _('No sort selected'), _(
-            'You must select at least one column on which to sort'), show=True)
+        return error_dialog(self, _('No sort selected'), _('You must select at least one column on which to sort'), show=True)
 
     def accept(self):
         if not self.current_sort_spec:
@@ -143,12 +146,19 @@ class ChooseMultiSort(Dialog):
         spec = self.current_sort_spec
         if not spec:
             return self.no_column_selected_error()
-        name, ok = QInputDialog.getText(self, _('Choose name'),
-                _('Choose a name for these settings'))
-        if ok:
-            q = self.saved_specs
-            q[name] = spec
-            self.saved_specs = q
+        d = QInputDialog(self)
+        d.setComboBoxEditable(True)
+        d.setComboBoxItems(sorted(self.saved_specs.keys(), key=primary_sort_key))
+        d.setWindowTitle(_('Choose name'))
+        d.setLabelText(_('Choose a name for these settings'))
+        if d.exec():
+            name = d.textValue()
+            if name:
+                q = self.saved_specs
+                q[name] = spec
+                self.saved_specs = q
+            else:
+                error_dialog(self, _('No name provided'), _('You must provide a name for the settings'), show=True)
 
     def populate_load_menu(self):
         m = self.load_menu
@@ -159,20 +169,27 @@ class ChooseMultiSort(Dialog):
             return
         for name in sorted(specs, key=primary_sort_key):
             ac = m.addAction(name, self.load_spec)
+            assert ac is not None
             ac.setObjectName(name)
         m.addSeparator()
         m = m.addMenu(_('Remove saved sort'))
+        assert m is not None
         for name in sorted(specs, key=primary_sort_key):
             ac = m.addAction(name, self.remove_spec)
+            assert ac is not None
             ac.setObjectName(name)
 
     def load_spec(self):
-        name = self.sender().objectName()
+        sender = self.sender()
+        assert sender is not None
+        name = sender.objectName()
         spec = self.saved_specs[name]
         self.apply_spec(spec)
 
     def remove_spec(self):
-        name = self.sender().objectName()
+        sender = self.sender()
+        assert sender is not None
+        name = sender.objectName()
         q = self.saved_specs
         if q.pop(name, None):
             self.saved_specs = q
@@ -189,6 +206,7 @@ class ChooseMultiSort(Dialog):
             item = imap.get(key)
             if item is not None:
                 item = cl.takeItem(cl.row(item))
+                assert item is not None
                 cl.insertItem(0, item)
                 self.sort_order_map[key] = ascending
                 item.setCheckState(Qt.CheckState.Checked)
@@ -196,8 +214,10 @@ class ChooseMultiSort(Dialog):
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
+
     app = Application([])
     from calibre.library import db
+
     d = ChooseMultiSort(db())
     d.exec()
     print(d.current_sort_spec)

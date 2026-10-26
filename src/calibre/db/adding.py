@@ -1,21 +1,20 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 import re
 import time
 from collections import defaultdict
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from functools import partial
+from typing import Any
 
 from calibre import prints
 from calibre.constants import filesystem_encoding, ismacos, iswindows
 from calibre.ebooks import BOOK_EXTENSIONS
 from calibre.utils.filenames import make_long_path_useable
-from polyglot.builtins import itervalues
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.localization import _
 
 
 def splitext(path):
@@ -33,6 +32,7 @@ def path_ok(path):
 
 def compile_glob(pat):
     import fnmatch
+
     return re.compile(fnmatch.translate(pat), flags=re.I)
 
 
@@ -41,18 +41,33 @@ def compile_rule(rule):
     if 'with' in mt:
         q = icu_lower(rule['query'])
         if 'startswith' in mt:
-            func = lambda filename: icu_lower(filename).startswith(q)
+
+            def func(filename):
+                return icu_lower(filename).startswith(q)
+
         else:
-            func = lambda filename: icu_lower(filename).endswith(q)
+
+            def func(filename):
+                return icu_lower(filename).endswith(q)
+
     elif 'glob' in mt:
         q = compile_glob(rule['query'])
-        func  = lambda filename: q.match(filename) is not None
+
+        def func(filename):
+            return q.match(filename) is not None
+
     else:
         q = re.compile(rule['query'])
-        func  = lambda filename: q.match(filename) is not None
+
+        def func(filename):
+            return q.match(filename) is not None
+
     ans = func
     if mt.startswith('not_'):
-        ans = lambda filename: not func(filename)
+
+        def ans(filename):
+            return not func(filename)
+
     return ans, rule['action'] == 'add'
 
 
@@ -70,13 +85,14 @@ def metadata_extensions():
     # but not actually added)
     global _metadata_extensions
     if _metadata_extensions is None:
-        _metadata_extensions =  frozenset(BOOK_EXTENSIONS) | {'opf'}
+        _metadata_extensions = frozenset(BOOK_EXTENSIONS) | {'opf'}
     return _metadata_extensions
 
 
 if iswindows or ismacos:
     unicode_listdir = os.listdir
 else:
+
     def unicode_listdir(root):
         root = root.encode(filesystem_encoding)
         for x in os.listdir(root):
@@ -89,16 +105,37 @@ else:
 def listdir(root, sort_by_mtime=False):
     items = (make_long_path_useable(os.path.join(root, x)) for x in unicode_listdir(root))
     if sort_by_mtime:
+
         def safe_mtime(x):
             try:
                 return os.path.getmtime(x)
             except OSError:
                 return time.time()
+
         items = sorted(items, key=safe_mtime)
 
     for path in items:
         if path_ok(path):
             yield path
+
+
+def list_only_files_in_dir(root, sort_by_mtime=False):
+    def files_iter():
+        for x in os.scandir(root):
+            with suppress(OSError):
+                if x.is_file(follow_symlinks=True):
+                    yield x
+
+    items = files_iter()
+    if sort_by_mtime:
+
+        def safe_mtime(x: os.DirEntry):
+            with suppress(OSError):
+                return x.stat(follow_symlinks=True).st_mtime_ns
+            return 0
+
+        items = sorted(items, key=safe_mtime)
+    yield from (make_long_path_useable(os.path.join(root, x.name)) for x in items)
 
 
 def allow_path(path, ext, compiled_rules):
@@ -108,7 +145,7 @@ def allow_path(path, ext, compiled_rules):
     return ans
 
 
-import_ctx = None
+import_ctx: dict[str, Any] | None = None
 
 
 @contextmanager
@@ -121,6 +158,8 @@ def run_import_plugins_before_metadata(tdir, group_id=0):
 
 def run_import_plugins(formats):
     from calibre.ebooks.metadata.worker import run_import_plugins
+
+    assert import_ctx is not None
     import_ctx['group_id'] += 1
     ans = run_import_plugins(formats, import_ctx['group_id'], import_ctx['tdir'])
     fm = import_ctx['format_map']
@@ -130,7 +169,7 @@ def run_import_plugins(formats):
     return ans
 
 
-def find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=(), listdir_impl=listdir):
+def find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=(), listdir_impl=list_only_files_in_dir):
     dirpath = make_long_path_useable(os.path.abspath(dirpath))
     if single_book_per_directory:
         formats = {}
@@ -139,7 +178,7 @@ def find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=(
             if allow_path(path, ext, compiled_rules):
                 formats[ext] = path
         if formats_ok(formats):
-            yield list(itervalues(formats))
+            yield list(formats.values())
     else:
         books = defaultdict(dict)
         for path in listdir_impl(dirpath, sort_by_mtime=True):
@@ -147,9 +186,9 @@ def find_books_in_directory(dirpath, single_book_per_directory, compiled_rules=(
             if allow_path(path, ext, compiled_rules):
                 books[icu_lower(key) if isinstance(key, str) else key.lower()][ext] = path
 
-        for formats in itervalues(books):
+        for formats in books.values():
             if formats_ok(formats):
-                yield list(itervalues(formats))
+                yield list(formats.values())
 
 
 def create_format_map(formats):
@@ -162,8 +201,7 @@ def create_format_map(formats):
     return format_map
 
 
-def import_book_directory_multiple(db, dirpath, callback=None,
-        added_ids=None, compiled_rules=(), add_duplicates=False):
+def import_book_directory_multiple(db, dirpath, callback=None, added_ids=None, compiled_rules=(), add_duplicates=False):
     from calibre.ebooks.metadata.meta import metadata_from_formats
 
     duplicates = []
@@ -186,6 +224,7 @@ def import_book_directory_multiple(db, dirpath, callback=None,
 
 def import_book_directory(db, dirpath, callback=None, added_ids=None, compiled_rules=(), add_duplicates=False):
     from calibre.ebooks.metadata.meta import metadata_from_formats
+
     dirpath = os.path.abspath(dirpath)
     formats = None
     for formats in find_books_in_directory(dirpath, True, compiled_rules=compiled_rules):
@@ -205,14 +244,19 @@ def import_book_directory(db, dirpath, callback=None, added_ids=None, compiled_r
         callback(mi.title)
 
 
-def recursive_import(db, root, single_book_per_directory=True,
-        callback=None, added_ids=None, compiled_rules=(), add_duplicates=False):
+def recursive_import(db, root, single_book_per_directory=True, callback=None, added_ids=None, compiled_rules=(), add_duplicates=False):
     root = os.path.abspath(root)
-    duplicates  = []
+    duplicates = []
     for dirpath in os.walk(root):
         func = import_book_directory if single_book_per_directory else import_book_directory_multiple
-        res = func(db, dirpath[0], callback=callback,
-            added_ids=added_ids, compiled_rules=compiled_rules, add_duplicates=add_duplicates)
+        res = func(
+            db,
+            dirpath[0],
+            callback=callback,
+            added_ids=added_ids,
+            compiled_rules=compiled_rules,
+            add_duplicates=add_duplicates,
+        )
         if res is not None:
             duplicates.extend(res)
         if callable(callback):
@@ -222,8 +266,12 @@ def recursive_import(db, root, single_book_per_directory=True,
 
 
 def cdb_find_in_dir(dirpath, single_book_per_directory, compiled_rules):
-    return find_books_in_directory(dirpath, single_book_per_directory=single_book_per_directory,
-            compiled_rules=compiled_rules, listdir_impl=partial(listdir, sort_by_mtime=True))
+    return find_books_in_directory(
+        dirpath,
+        single_book_per_directory=single_book_per_directory,
+        compiled_rules=compiled_rules,
+        listdir_impl=partial(list_only_files_in_dir, sort_by_mtime=True),
+    )
 
 
 def cdb_recursive_find(root, single_book_per_directory=True, compiled_rules=()):
@@ -239,7 +287,7 @@ def add_catalog(cache, path, title, dbapi=None):
 
     fmt = os.path.splitext(path)[1][1:].lower()
     new_book_added = False
-    with lopen(path, 'rb') as stream:
+    with open(path, 'rb') as stream:
         with cache.write_lock:
             matches = cache._search('title:="{}" and tags:="{}"'.format(title.replace('"', '\\"'), _('Catalog')), None)
             db_id = None
@@ -248,18 +296,22 @@ def add_catalog(cache, path, title, dbapi=None):
             try:
                 mi = get_metadata(stream, fmt)
                 mi.authors = ['calibre']
-            except:
+            except Exception:
                 mi = Metadata(title, ['calibre'])
             mi.title, mi.authors = title, ['calibre']
             mi.author_sort = 'calibre'  # The MOBI/AZW3 format sets author sort to date
-            mi.tags = [_('Catalog')]
             mi.pubdate = mi.timestamp = utcnow()
             if fmt == 'mobi':
                 mi.cover, mi.cover_data = None, (None, None)
             if db_id is None:
+                mi.tags = [_('Catalog')]
                 db_id = cache._create_book_entry(mi, apply_import_tags=False)
                 new_book_added = True
             else:
+                tags: list[str] = list(cache._field_for('tags', db_id) or ())
+                if _('Catalog') not in tags:
+                    tags.append(_('Catalog'))
+                mi.tags = tags
                 cache._set_metadata(db_id, mi)
         cache.add_format(db_id, fmt, stream, dbapi=dbapi)  # Can't keep write lock since post-import hooks might run
 
@@ -271,10 +323,9 @@ def add_news(cache, path, arg, dbapi=None):
     from calibre.utils.date import utcnow
 
     fmt = os.path.splitext(getattr(path, 'name', path))[1][1:].lower()
-    stream = path if hasattr(path, 'read') else lopen(path, 'rb')
+    stream = path if hasattr(path, 'read') else open(path, 'rb')
     stream.seek(0)
-    mi = get_metadata(stream, fmt, use_libprs_metadata=False,
-            force_read_metadata=True)
+    mi = get_metadata(stream, fmt, use_libprs_metadata=False, force_read_metadata=True)
     # Force the author to calibre as the auto delete of old news checks for
     # both the author==calibre and the tag News
     mi.authors = ['calibre']

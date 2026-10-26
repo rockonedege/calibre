@@ -1,12 +1,9 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
-
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
 from lxml import etree
 
 
 class InlineClass(etree.XSLTExtension):
-
     FMTS = ('italics', 'bold', 'strike-through', 'small-caps')
 
     def __init__(self, log):
@@ -27,11 +24,11 @@ class InlineClass(etree.XSLTExtension):
         if fs:
             if fs not in self.font_sizes:
                 self.font_sizes.append(fs)
-            classes.append('fs%d'%self.font_sizes.index(fs))
+            classes.append(f'fs{self.font_sizes.index(fs)}')
         fc = input_node.get('font-color', False)
         if fc:
             if fc not in self.colors:
                 self.colors.append(fc)
-            classes.append('col%d'%self.colors.index(fc))
+            classes.append(f'col{self.colors.index(fc)}')
 
         output_parent.text = ' '.join(classes)

@@ -7,6 +7,7 @@ import tempfile
 
 from calibre.constants import cache_dir, config_dir
 from calibre.utils.config import JSONConfig
+from calibre.utils.date import isoformat, utcnow
 from calibre.utils.filenames import atomic_rename
 
 vprefs = JSONConfig('viewer-webengine')
@@ -19,12 +20,45 @@ vprefs.defaults['old_prefs_migrated'] = False
 vprefs.defaults['bookmarks_sort'] = 'title'
 vprefs.defaults['highlight_export_format'] = 'txt'
 vprefs.defaults['auto_update_lookup'] = True
+vprefs.defaults['saved_window_sizes'] = {}
+
+
+def saved_window_sizes() -> dict[str, tuple[int, int]]:
+    ans = {}
+    for name, size in (vprefs['saved_window_sizes'] or {}).items():
+        try:
+            width, height = map(int, size)
+        except Exception:
+            continue
+        if width > 0 and height > 0:
+            ans[name] = width, height
+    return ans
+
+
+def save_window_size(name: str, size: tuple[int, int] | None) -> None:
+    "Save size under name, or, when size is None, delete the size saved under name"
+    sizes = saved_window_sizes()
+    if size is None:
+        sizes.pop(name, None)
+    else:
+        sizes[name] = int(size[0]), int(size[1])
+    vprefs['saved_window_sizes'] = sizes
 
 
 def get_session_pref(name, default=None, group='standalone_misc_settings'):
     sd = vprefs['session_data']
     g = sd.get(group, {}) if group else sd
     return g.get(name, default)
+
+
+def set_session_pref(name, val=None, group='standalone_misc_settings'):
+    sd = vprefs['session_data']
+    g = sd.get(group, {}) if group else sd
+    if val is None:
+        g.pop(name, None)
+    else:
+        g[name] = val
+    vprefs['session_data'] = sd
 
 
 def get_pref_group(name):
@@ -67,9 +101,79 @@ def save_reading_rates(key, rates):
         atomic_rename(f.name, path)
     except Exception:
         import traceback
+
         traceback.print_exc()
 
 
 def load_reading_rates(key):
     existing = get_existing_reading_rates()
     return existing.get(key)
+
+
+def delete_all_reading_rates():
+    path = reading_rates_path()
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        import traceback
+
+        traceback.print_exc()
+
+
+def expand_profile_user_names(user_names):
+    user_names = set(user_names)
+    sau = get_session_pref('sync_annots_user', default='')
+    if sau:
+        if sau == '*':
+            sau = 'user:'
+        if 'viewer:' in user_names:
+            user_names.add(sau)
+        elif sau in user_names:
+            user_names.add('viewer:')
+    return user_names
+
+
+def load_viewer_profiles(*user_names: str):
+    user_names = expand_profile_user_names(user_names)
+    ans = {}
+    try:
+        with open(os.path.join(viewer_config_dir, 'profiles.json'), 'rb') as f:
+            raw = json.loads(f.read())
+    except FileNotFoundError:
+        return ans
+    for uname, profiles in raw.items():
+        if uname in user_names:
+            for profile_name, profile in profiles.items():
+                if profile_name not in ans or ans[profile_name]['__timestamp__'] <= profile['__timestamp__']:
+                    ans[profile_name] = profile
+    return ans
+
+
+def save_viewer_profile(profile_name, profile, *user_names: str):
+    user_names = expand_profile_user_names(user_names)
+    if isinstance(profile, (str, bytes)):
+        profile = json.loads(profile)
+    if isinstance(profile, dict):
+        profile['__timestamp__'] = isoformat(utcnow())
+        from calibre.gui2.viewer.toolbars import DEFAULT_ACTIONS, current_actions
+
+        ca = current_actions()
+        s = {}
+        if ca != DEFAULT_ACTIONS:
+            s['toolbar-actions'] = ca
+        if s:
+            profile['__standalone_extra_settings__'] = s
+    try:
+        with open(os.path.join(viewer_config_dir, 'profiles.json'), 'rb') as f:
+            raw = json.loads(f.read())
+    except FileNotFoundError:
+        raw = {}
+    for name in user_names:
+        if isinstance(profile, dict):
+            raw.setdefault(name, {})[profile_name] = profile
+        elif name in raw:
+            raw[name].pop(profile_name, None)
+    with open(os.path.join(viewer_config_dir, 'profiles.json'), 'wb') as f:
+        f.write(json.dumps(raw, indent=2, sort_keys=True).encode())

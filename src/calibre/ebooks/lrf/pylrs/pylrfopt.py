@@ -2,12 +2,12 @@ def _optimize(tagList, tagName, conversion):
     # copy the tag of interest plus any text
     newTagList = []
     for tag in tagList:
-        if tag.name == tagName or tag.name == "rawtext":
+        if tag.name in {tagName, 'rawtext'}:
             newTagList.append(tag)
 
     # now, eliminate any duplicates (leaving the last one)
     for i, newTag in enumerate(newTagList[:-1]):
-        if newTag.name == tagName and newTagList[i+1].name == tagName:
+        if newTag.name == tagName and newTagList[i + 1].name == tagName:
             tagList.remove(newTag)
 
     # eliminate redundant settings to same value across text strings
@@ -18,9 +18,9 @@ def _optimize(tagList, tagName, conversion):
 
     for i, newTag in enumerate(newTagList[:-1]):
         value = conversion(newTag.parameter)
-        nextValue = conversion(newTagList[i+1].parameter)
+        nextValue = conversion(newTagList[i + 1].parameter)
         if value == nextValue:
-            tagList.remove(newTagList[i+1])
+            tagList.remove(newTagList[i + 1])
 
     # eliminate any setting that don't have text after them
     while len(tagList) > 0 and tagList[-1].name == tagName:
@@ -36,6 +36,6 @@ def tagListOptimizer(tagList):
     # should be:
     # fontsize=200 text
     oldSize = len(tagList)
-    _optimize(tagList, "fontsize", int)
-    _optimize(tagList, "fontweight", int)
+    _optimize(tagList, 'fontsize', int)
+    _optimize(tagList, 'fontweight', int)
     return oldSize - len(tagList)

@@ -10,12 +10,11 @@
 """
 
 
-import re
-import sys
-import operator
 import functools
+import operator
+import re
 import string
-
+import sys
 
 # * Raw strings with the r'' notation are used so that \ do not need
 #   to be escaped.
@@ -122,12 +121,8 @@ COMPILED_TOKEN_INDEXES = {}  # {name: i}  helper for the C speedups
 TOKEN_DISPATCH = []
 
 
-try:
-    unichr
-except NameError:
-    # Python 3
-    unichr = chr
-    unicode = str
+unichr = chr
+unicode = str
 
 
 def _init():

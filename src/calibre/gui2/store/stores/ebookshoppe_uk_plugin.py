@@ -1,19 +1,12 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-store_version = 1  # Needed for dynamic plugin loading
+store_version = 2  # Needed for dynamic plugin loading
 
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
-
-try:
-    from urllib.parse import quote
-except ImportError:
-    from urllib2 import quote
 from contextlib import closing
-
-from lxml import html
+from urllib.parse import quote
 
 from qt.core import QUrl
 
@@ -24,10 +17,14 @@ from calibre.gui2.store.basic_config import BasicStoreConfig
 from calibre.gui2.store.search_result import SearchResult
 from calibre.gui2.store.web_store_dialog import WebStoreDialog
 
+try:
+    from calibre.utils.xml_parse import safe_html_fromstring
+except ImportError:
+    from lxml.html import fromstring as safe_html_fromstring
+
 
 class EBookShoppeUKStore(BasicStoreConfig, StorePlugin):
-
-    def open(self, parent=None, detail_item=None, external=False):
+    def open(self, gui=None, parent=None, detail_item=None, external=False):
         url_details = 'http://www.awin1.com/cread.php?awinmid=1414&awinaffid=120917&clickref=&p={0}'
         url = 'http://www.awin1.com/awclick.php?mid=2666&id=120917'
 
@@ -47,17 +44,16 @@ class EBookShoppeUKStore(BasicStoreConfig, StorePlugin):
     def search(self, query, max_results=10, timeout=60):
         url = 'http://www.ebookshoppe.com/search.php?search_query=' + quote(query)
         br = browser()
-        br.addheaders = [("Referer", "http://www.ebookshoppe.com/")]
+        br.addheaders = [('Referer', 'http://www.ebookshoppe.com/')]
 
         counter = max_results
         with closing(br.open(url, timeout=timeout)) as f:
-            doc = html.fromstring(f.read())
+            doc = safe_html_fromstring(f.read())
             for data in doc.xpath('//ul[@class="ProductList"]/li'):
                 if counter <= 0:
                     break
 
-                id = ''.join(data.xpath('./div[@class="ProductDetails"]/'
-                                        'strong/a/@href')).strip()
+                id = ''.join(data.xpath('./div[@class="ProductDetails"]/strong/a/@href')).strip()
                 if not id:
                     continue
                 cover_url = ''.join(data.xpath('./div[@class="ProductImage"]/a/img/@src'))
@@ -81,12 +77,11 @@ class EBookShoppeUKStore(BasicStoreConfig, StorePlugin):
     def get_author_and_formats(self, search_result, timeout):
         br = browser()
         with closing(br.open(search_result.detail_item, timeout=timeout)) as nf:
-            idata = html.fromstring(nf.read())
+            idata = safe_html_fromstring(nf.read())
             author = ''.join(idata.xpath('//div[@id="ProductOtherDetails"]/dl/dd[1]/text()'))
             if author:
                 search_result.author = author
-            formats = idata.xpath('//dl[@class="ProductAddToCart"]/dd/'
-                                  'ul[@class="ProductOptionList"]/li/label/text()')
+            formats = idata.xpath('//dl[@class="ProductAddToCart"]/dd/ul[@class="ProductOptionList"]/li/label/text()')
             if formats:
                 search_result.formats = ', '.join(formats)
             search_result.drm = SearchResult.DRM_UNKNOWN

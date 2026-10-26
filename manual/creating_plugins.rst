@@ -27,7 +27,7 @@ Create a file named :file:`__init__.py` (this is a special name and must always 
 and enter the following Python code into it:
 
 .. literalinclude:: plugin_examples/helloworld/__init__.py
-    :lines: 10-
+    :lines: 9-
 
 That's all. To add this code to calibre as a plugin, simply run the following in
 the folder in which you created :file:`__init__.py`::
@@ -43,7 +43,7 @@ You can download the Hello World plugin from
 :download_file:`helloworld_plugin.zip`.
 
 Every time you use calibre to convert a book, the plugin's :meth:`run` method will be called and the
-converted book will have its publisher set to "Hello World". This is a trivial plugin, lets move on to
+converted book will have its publisher set to "Hello World". This is a trivial plugin, let's move on to
 a more complex example that actually adds a component to the user interface.
 
 A User Interface plugin
@@ -69,7 +69,7 @@ The first thing to note is that this ZIP file has a lot more files in it, explai
             from calibre_plugins.some_name.some_module import some_object
 
         The prefix ``calibre_plugins`` must always be present. ``some_name`` comes from the filename of the empty text file.
-        ``some_module`` refers to  :file:`some_module.py` file inside the ZIP file. Note that this importing is just as
+        ``some_module`` refers to :file:`some_module.py` file inside the ZIP file. Note that this importing is just as
         powerful as regular Python imports. You can create packages and subpackages of .py modules inside the ZIP file,
         just like you would normally (by defining __init__.py in each sub-folder), and everything should "just work".
 
@@ -104,7 +104,7 @@ __init__.py
 First, the obligatory ``__init__.py`` to define the plugin metadata:
 
 .. literalinclude:: plugin_examples/interface_demo/__init__.py
-    :lines: 10-
+    :lines: 8-
 
 The only noteworthy feature is the field :attr:`actual_plugin`. Since calibre has both command line and GUI interfaces,
 GUI plugins like this one should not load any GUI libraries in __init__.py. The actual_plugin field does this for you,
@@ -122,7 +122,7 @@ ui.py
 Now let's look at ui.py which defines the actual GUI plugin. The source code is heavily commented and should be self explanatory:
 
 .. literalinclude:: plugin_examples/interface_demo/ui.py
-    :lines: 16-
+    :lines: 15-
 
 main.py
 ^^^^^^^^^
@@ -130,7 +130,7 @@ main.py
 The actual logic to implement the Interface Plugin Demo dialog.
 
 .. literalinclude:: plugin_examples/interface_demo/main.py
-    :lines: 16-
+    :lines: 14-
 
 Getting resources from the plugin ZIP file
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -144,8 +144,8 @@ calibre's plugin loading system defines a couple of built-in functions that allo
         a forward slash as the path separator, even on Windows. When you pass
         in a single name, the function will return the raw bytes of that file
         or None if the name was not found in the ZIP file. If you pass in more
-        than one name then it returns a dict mapping the names to bytes.  If a
-        name is not found, it will not be present in the returned dict.
+        than one name then it returns a dictionary mapping the names to bytes.  If a
+        name is not found, it will not be present in the returned dictionary.
 
     **get_icons(name_or_list_of_names, plugin_name='')**
         A wrapper for get_resources() that creates QIcon objects
@@ -175,7 +175,7 @@ calibre has many different ways to store configuration data (a legacy of its lon
 The code to manage configuration data in the demo plugin is in config.py:
 
 .. literalinclude:: plugin_examples/interface_demo/config.py
-    :lines: 10-
+    :lines: 8-
 
 The ``prefs`` object is now available throughout the plugin code by a simple::
 
@@ -185,7 +185,7 @@ The ``prefs`` object is now available throughout the plugin code by a simple::
 You can see the ``prefs`` object being used in main.py:
 
 .. literalinclude:: plugin_examples/interface_demo/main.py
-    :lines: 151-
+    :lines: 142-
 
 
 Edit book plugins
@@ -203,7 +203,7 @@ Now we create the mandatory ``__init__.py`` file that contains metadata about
 the plugin -- its name, author, version, etc.
 
 .. literalinclude:: plugin_examples/editor_demo/__init__.py
-    :lines: 8-
+    :lines: 7-
 
 A single editor plugin can provide multiple tools each tool corresponds to a
 single button in the toolbar and entry in the :guilabel:`Plugins` menu in the
@@ -225,7 +225,7 @@ various important concepts that you will need in developing your own plugins,
 so you should read the (heavily commented) source code carefully.
 
 .. literalinclude:: plugin_examples/editor_demo/main.py
-    :lines: 8-
+    :lines: 7-
 
 Let's break down ``main.py``. We see that it defines a single tool, named
 *Magnify fonts*. This tool will ask the user for a number and multiply all font
@@ -291,6 +291,11 @@ with the ``CALIBRE_OVERRIDE_LANG`` environment variable set. For example::
     CALIBRE_OVERRIDE_LANG=de
 
 Replace ``de`` with the language code of the language you want to test.
+
+For translations with plurals, use the ``ngettext()`` function instead of
+``_()``. For example::
+
+    ngettext('Delete a book', 'Delete {} books', num_books).format(num_books)
 
 The plugin API
 --------------------------------

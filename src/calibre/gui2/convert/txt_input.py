@@ -1,32 +1,31 @@
-__license__ = 'GPL 3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
 from qt.core import QListWidgetItem, Qt
 
-from calibre.gui2.convert.txt_input_ui import Ui_Form
-from calibre.gui2.convert import Widget
-from calibre.ebooks.conversion.plugins.txt_input import MD_EXTENSIONS
 from calibre.ebooks.conversion.config import OPTIONS
-from polyglot.builtins import iteritems, itervalues
+from calibre.ebooks.conversion.plugins.txt_input import MD_EXTENSIONS
+from calibre.gui2.convert import Widget
+from calibre.gui2.convert.txt_input_ui import Ui_Form
+from calibre.utils.localization import _
 
 
 class PluginWidget(Widget, Ui_Form):
-
     TITLE = _('TXT input')
-    HELP = _('Options specific to')+' TXT '+_('input')
+    HELP = _('Options specific to') + ' TXT ' + _('input')
     COMMIT_NAME = 'txt_input'
     ICON = 'mimetypes/txt.png'
 
     def __init__(self, parent, get_option, get_help, db=None, book_id=None):
         Widget.__init__(self, parent, OPTIONS['input']['txt'])
+        self.markdown_label.setText(self.markdown_label.text().format('https://daringfireball.net/projects/markdown'))
+        self.markdown_extensions_label.setText(self.markdown_extensions_label.text().format('https://python-markdown.github.io/extensions/'))
         self.db, self.book_id = db, book_id
         for x in get_option('paragraph_type').option.choices:
             self.opt_paragraph_type.addItem(x)
         for x in get_option('formatting_type').option.choices:
             self.opt_formatting_type.addItem(x)
         self.md_map = {}
-        for name, text in iteritems(MD_EXTENSIONS):
+        for name, text in MD_EXTENSIONS.items():
             i = QListWidgetItem(f'{name} - {text}', self.opt_markdown_extensions)
             i.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             i.setData(Qt.ItemDataRole.UserRole, name)
@@ -36,7 +35,7 @@ class PluginWidget(Widget, Ui_Form):
 
     def set_value_handler(self, g, val):
         if g is self.opt_markdown_extensions:
-            for i in itervalues(self.md_map):
+            for i in self.md_map.values():
                 i.setCheckState(Qt.CheckState.Unchecked)
             for x in val.split(','):
                 x = x.strip()
@@ -49,7 +48,7 @@ class PluginWidget(Widget, Ui_Form):
             return Widget.get_value_handler(self, g)
         return ', '.join(str(i.data(Qt.ItemDataRole.UserRole) or '') for i in self.md_map.values() if i.checkState() == Qt.CheckState.Checked)
 
-    def connect_gui_obj_handler(self, g, f):
-        if g is not self.opt_markdown_extensions:
+    def connect_gui_obj_handler(self, gui_obj, slot):
+        if gui_obj is not self.opt_markdown_extensions:
             raise NotImplementedError()
-        g.itemChanged.connect(self.changed_signal)
+        gui_obj.itemChanged.connect(self.changed_signal)

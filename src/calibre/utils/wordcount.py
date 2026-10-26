@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-
 """
 Get word, character, and Asian character counts
 
@@ -23,8 +22,9 @@ Sourced from:
 http://ginstrom.com/scribbles/2008/05/17/counting-words-etc-in-an-html-file-with-python/
 http://ginstrom.com/scribbles/2007/10/06/counting-words-characters-and-asian-characters-with-python/
 """
+
 __version__ = 0.1
-__author__ = "Ryan Ginstrom"
+__author__ = 'Ryan Ginstrom'
 
 IDEOGRAPHIC_SPACE = 0x3000
 
@@ -68,23 +68,26 @@ def get_wordcount(text):
 
     characters = len(text)
     chars_no_spaces = sum(not x.isspace() for x in text)
-    asian_chars =  sum(is_asian(x) for x in text)
+    asian_chars = sum(is_asian(x) for x in text)
     non_asian_words = nonj_len(text)
     words = non_asian_words + asian_chars
 
-    return dict(characters=characters,
-                chars_no_spaces=chars_no_spaces,
-                asian_chars=asian_chars,
-                non_asian_words=non_asian_words,
-                words=words)
+    return {
+        'characters': characters,
+        'chars_no_spaces': chars_no_spaces,
+        'asian_chars': asian_chars,
+        'non_asian_words': non_asian_words,
+        'words': words,
+    }
 
 
 def dict2obj(dictionary):
     """Transform a dictionary into an object"""
-    class Obj:
 
+    class Obj:
         def __init__(self, dictionary):
             self.__dict__.update(dictionary)
+
     return Obj(dictionary)
 
 

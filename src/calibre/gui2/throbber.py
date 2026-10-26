@@ -1,20 +1,26 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
 from qt.core import (
-    QToolButton, QSize, QPropertyAnimation, Qt, QMetaObject, pyqtProperty, QSizePolicy,
-    QWidget, QIcon, QPainter, QStyleOptionToolButton, QStyle, QAbstractAnimation)
+    QAbstractAnimation,
+    QIcon,
+    QMetaObject,
+    QPainter,
+    QPropertyAnimation,
+    QSize,
+    QSizePolicy,
+    QStyle,
+    QStyleOptionToolButton,
+    Qt,
+    QToolButton,
+    QWidget,
+    pyqtProperty,
+)
 
 from calibre.gui2 import config
 
 
 class ThrobbingButton(QToolButton):
-
     @pyqtProperty(int)
     def icon_size(self):
         return self._icon_size
@@ -32,7 +38,7 @@ class ThrobbingButton(QToolButton):
         QToolButton.setIcon(self, QIcon.ic('donate.png'))
         self.setText('\xa0')
         self.animation = QPropertyAnimation(self, b'icon_size', self)
-        self.animation.setDuration(int(60/72.*1000))
+        self.animation.setDuration(int(60 / 72.0 * 1000))
         self.animation.setLoopCount(4)
         self.animation.valueChanged.connect(self.value_changed)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -41,10 +47,10 @@ class ThrobbingButton(QToolButton):
     def animation_finished(self):
         self.icon_size = self.iconSize().width()
 
-    def enterEvent(self, ev):
+    def enterEvent(self, a0):
         self.start_animation()
 
-    def leaveEvent(self, ev):
+    def leaveEvent(self, a0):
         self.stop_animation()
 
     def value_changed(self, val):
@@ -67,27 +73,31 @@ class ThrobbingButton(QToolButton):
         self.animation.stop()
         self.animation_finished()
 
-    def paintEvent(self, ev):
+    def paintEvent(self, a0):
         size = self._icon_size if self._icon_size > 10 else self.iconSize().width()
         size = size or max(0, self.width() - 4)
         p = QPainter(self)
         opt = QStyleOptionToolButton()
         self.initStyleOption(opt)
         s = self.style()
+        assert s is not None
         opt.iconSize = QSize(size, size)
         s.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, opt, p, self)
 
 
 if __name__ == '__main__':
     from qt.core import QApplication, QHBoxLayout
+
     app = QApplication([])
     w = QWidget()
     w.setLayout(QHBoxLayout())
     b = ThrobbingButton()
     b.setIcon(QIcon.ic('donate.png'))
-    w.layout().addWidget(b)
+    wl = w.layout()
+    assert wl is not None
+    wl.addWidget(b)
     w.show()
-    b.set_normal_icon_size(64, 64)
+    # b.set_normal_icon_size(64, 64)
     b.start_animation()
 
     app.exec()

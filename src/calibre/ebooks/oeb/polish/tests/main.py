@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 from calibre.utils.run_tests import find_tests_in_package, run_tests
 
@@ -13,7 +10,7 @@ def find_tests():
 
 if __name__ == '__main__':
     try:
-        import init_calibre  # noqa
+        import init_calibre  # ruff: ignore[unused-import]
     except ImportError:
         pass
     run_tests(find_tests)

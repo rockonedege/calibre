@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
-
+import atexit
 import errno
 import json
 import os
@@ -12,14 +12,16 @@ from itertools import count
 
 from calibre import walk
 from calibre.constants import cache_dir, iswindows
-from calibre.ptempfile import TemporaryFile
 from calibre.srv.render_book import RENDER_VERSION
 from calibre.utils.filenames import rmtree
 from calibre.utils.ipc.simple_worker import start_pipe_worker
 from calibre.utils.lock import ExclusiveFile
 from calibre.utils.serialize import msgpack_dumps
 from calibre.utils.short_uuid import uuid4
-from polyglot.builtins import as_bytes, as_unicode, iteritems
+from polyglot.builtins import as_bytes, as_unicode
+
+if iswindows:
+    from calibre_extensions import winutil
 
 DAY = 24 * 3600
 VIEWER_VERSION = 1
@@ -60,20 +62,37 @@ def robust_rmtree(x):
             except UnicodeDecodeError:
                 rmtree(as_bytes(x))
             return True
-        except OSError:
-            time.sleep(0.1)
+        except OSError as e:
+            if iswindows and e.winerror == winutil.ERROR_SHARING_VIOLATION:
+                time.sleep(0.1)
     return False
 
 
-def robust_rename(a, b):
-    retries = 20 if iswindows else 1  # retry on windows to get around the idiotic mandatory file locking
-    for i in range(retries):
+def is_transient_windows_lock_error(e: OSError) -> bool:
+    # Antivirus/file sync software holding a file open inside a directory
+    # causes renaming the directory to fail with ERROR_ACCESS_DENIED rather
+    # than ERROR_SHARING_VIOLATION
+    return iswindows and getattr(e, 'winerror', None) in (winutil.ERROR_SHARING_VIOLATION, winutil.ERROR_LOCK_VIOLATION, winutil.ERROR_ACCESS_DENIED)
+
+
+def robust_rename(a: str, b: str) -> OSError | None:
+    "Rename a to b, returning None on success or the last error on failure"
+    # retry on windows to get around the idiotic mandatory file locking, for
+    # up to about 15 seconds as on-access antivirus scanning of large books can take a while
+    delays = (0.1,) * 5 + (0.25,) * 4 + (0.5,) * 4 + (1,) * 11 if iswindows else ()
+    for delay in delays:
         try:
             os.rename(a, b)
-            return True
-        except OSError:
-            time.sleep(0.1)
-    return False
+            return None
+        except OSError as e:
+            if not is_transient_windows_lock_error(e):
+                return e
+            time.sleep(delay)
+    try:
+        os.rename(a, b)
+    except OSError as e:
+        return e
+    return None
 
 
 def clear_temp(temp_path):
@@ -155,40 +174,57 @@ def prepare_convert(temp_path, key, st, book_path):
 
 
 class ConversionFailure(ValueError):
-
     def __init__(self, book_path, worker_output):
         self.book_path = book_path
         self.worker_output = worker_output
-        ValueError.__init__(
-                self, f'Failed to convert book: {book_path} with error:\n{worker_output}')
+        ValueError.__init__(self, f'Failed to convert book: {book_path} with error:\n{worker_output}')
 
 
+preloaded_worker = None
 running_workers = []
 
 
+def create_worker():
+    import subprocess
+
+    return start_pipe_worker('from calibre.srv.render_book import viewer_main; viewer_main()', stderr=subprocess.STDOUT)
+
+
 def clean_running_workers():
+    global preloaded_worker
+    if preloaded_worker is not None:
+        preloaded_worker.kill()
+        preloaded_worker.wait()
+        preloaded_worker = None
     for p in running_workers:
         if p.poll() is None:
             p.kill()
+            p.wait()
     del running_workers[:]
 
 
+def initialize_worker():
+    global preloaded_worker
+    if preloaded_worker is None:
+        preloaded_worker = create_worker()
+        atexit.register(clean_running_workers)
+
+
 def do_convert(path, temp_path, key, instance):
+    global preloaded_worker
     tdir = os.path.join(temp_path, instance['path'])
-    p = None
+    p = preloaded_worker or create_worker()
+    preloaded_worker = create_worker()
+    running_workers.append(p)
+    data = msgpack_dumps((
+        path,
+        tdir,
+        {'size': instance['file_size'], 'mtime': instance['file_mtime'], 'hash': key},
+    ))
     try:
-        with TemporaryFile('log.txt') as logpath:
-            with open(logpath, 'w+b') as logf:
-                p = start_pipe_worker('from calibre.srv.render_book import viewer_main; viewer_main()', stdout=logf, stderr=logf)
-                running_workers.append(p)
-                p.stdin.write(msgpack_dumps((
-                    path, tdir, {'size': instance['file_size'], 'mtime': instance['file_mtime'], 'hash': key},
-                    )))
-                p.stdin.close()
-            if p.wait() != 0:
-                with lopen(logpath, 'rb') as logf:
-                    worker_output = logf.read().decode('utf-8', 'replace')
-                raise ConversionFailure(path, worker_output)
+        stdout, _ = p.communicate(data)
+        if p.returncode != 0:
+            raise ConversionFailure(path, stdout.decode('utf-8', 'replace'))
     finally:
         try:
             running_workers.remove(p)
@@ -211,11 +247,12 @@ def prepare_book(path, convert_func=do_convert, max_age=30 * DAY, force=False, p
     temp_path = safe_makedirs(os.path.join(book_cache_dir(), 't'))
 
     with cache_lock() as f:
+        metadata: dict
         try:
             metadata = json.loads(f.read())
         except ValueError:
             metadata = {'entries': {}, 'last_clear_at': 0}
-        entries = metadata['entries']
+        entries: dict = metadata['entries']
         instances = entries.setdefault(key, [])
         for instance in tuple(instances):
             if instance['status'] == 'finished':
@@ -236,18 +273,20 @@ def prepare_book(path, convert_func=do_convert, max_age=30 * DAY, force=False, p
     with cache_lock() as f:
         ans = tempfile.mkdtemp(dir=finished_path, prefix=f'c{next(td_counter)}-')
         instance['path'] = os.path.basename(ans)
+        metadata3: dict
         try:
-            metadata = json.loads(f.read())
+            metadata3 = json.loads(f.read())
         except ValueError:
-            metadata = {'entries': {}, 'last_clear_at': 0}
-        entries = metadata['entries']
-        instances = entries.setdefault(key, [])
+            metadata3 = {'entries': {}, 'last_clear_at': 0}
+        entries2: dict = metadata3['entries']
+        metadata = metadata3
+        instances = entries2.setdefault(key, [])
         os.rmdir(ans)
-        if not robust_rename(src_path, ans):
-            raise Exception((
-                'Failed to rename: "{}" to "{}" probably some software such as an antivirus or file sync program'
-                ' running on your computer has locked the files'
-            ).format(src_path, ans))
+        if (err := robust_rename(src_path, ans)) is not None:
+            raise Exception(
+                f'Failed to rename: "{src_path}" to "{ans}" probably some software such as an antivirus or file sync program'
+                f' running on your computer has locked the files. Error: {err}'
+            ) from err
 
         instance['status'] = 'finished'
         for q in instances:
@@ -268,27 +307,28 @@ def update_book(path, old_stat, name_data_map=None):
         new_key = book_hash(path, st.st_size, st.st_mtime)
         if old_key == new_key:
             return
+        metadata4: dict
         try:
-            metadata = json.loads(f.read())
+            metadata4 = json.loads(f.read())
         except ValueError:
-            metadata = {'entries': {}, 'last_clear_at': 0}
-        entries = metadata['entries']
-        instances = entries.get(old_key)
+            metadata4 = {'entries': {}, 'last_clear_at': 0}
+        entries3: dict = metadata4['entries']
+        instances = entries3.get(old_key)
         if not instances:
             return
         for instance in tuple(instances):
             if instance['status'] == 'finished':
-                entries.setdefault(new_key, []).append(instance)
+                entries3.setdefault(new_key, []).append(instance)
                 instances.remove(instance)
                 if not instances:
-                    del entries[old_key]
+                    del entries3[old_key]
                 instance['file_mtime'] = st.st_mtime
                 instance['file_size'] = st.st_size
                 if name_data_map:
-                    for name, data in iteritems(name_data_map):
+                    for name, data in name_data_map.items():
                         with open(os.path.join(finished_path, instance['path'], name), 'wb') as f2:
                             f2.write(data)
-                save_metadata(metadata, f)
+                save_metadata(metadata4, f)
                 return
 
 
@@ -300,18 +340,19 @@ def find_tests():
 
         def setUp(self):
             self.tdir = tempfile.mkdtemp()
-            book_cache_dir.override = os.path.join(self.tdir, 'ev2')
+            setattr(book_cache_dir, 'override', os.path.join(self.tdir, 'ev2'))
 
         def tearDown(self):
             rmtree(self.tdir)
-            del book_cache_dir.override
+            delattr(book_cache_dir, 'override')
 
         def test_viewer_cache(self):
 
             def convert_mock(path, temp_path, key, instance):
                 self.ae(instance['status'], 'working')
                 self.ae(instance['key'], key)
-                open(os.path.join(temp_path, instance['path'], 'sentinel'), 'wb').write(b'test')
+                with open(os.path.join(temp_path, instance['path'], 'sentinel'), 'wb') as f:
+                    f.write(b'test')
 
             def set_data(x):
                 if not isinstance(x, bytes):
@@ -322,7 +363,12 @@ def find_tests():
             book_src = os.path.join(self.tdir, 'book.epub')
             set_data('a')
             path = prepare_book(book_src, convert_func=convert_mock)
-            self.ae(open(os.path.join(path, 'sentinel'), 'rb').read(), b'test')
+
+            def read(x, mode='r'):
+                with open(x, mode) as f:
+                    return f.read()
+
+            self.ae(read(os.path.join(path, 'sentinel'), 'rb'), b'test')
 
             # Test that opening the same book uses the cache
             second_path = prepare_book(book_src, convert_func=convert_mock)
@@ -365,11 +411,11 @@ def find_tests():
             book_src = os.path.join(self.tdir, 'book2.epub')
             set_data('bb')
             path = prepare_book(book_src, convert_func=convert_mock)
-            self.ae(open(os.path.join(path, 'sentinel'), 'rb').read(), b'test')
+            self.ae(read(os.path.join(path, 'sentinel'), 'rb'), b'test')
             bs = os.stat(book_src)
             set_data('cde')
             update_book(book_src, bs, name_data_map={'sentinel': b'updated'})
-            self.ae(open(os.path.join(path, 'sentinel'), 'rb').read(), b'updated')
+            self.ae(read(os.path.join(path, 'sentinel'), 'rb'), b'updated')
             self.ae(1, len(os.listdir(os.path.join(book_cache_dir(), 'f'))))
             with cache_lock() as f:
                 metadata = json.loads(f.read())

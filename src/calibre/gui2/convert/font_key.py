@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2009, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, Kovid Goyal <kovid@kovidgoyal.net>
 
 from qt.core import QDialog, QDialogButtonBox
 
@@ -12,23 +8,20 @@ from calibre.utils.localization import localize_user_manual_link
 
 
 class FontKeyChooser(QDialog, Ui_Dialog):
-
     def __init__(self, parent=None, base_font_size=0.0, font_key=None):
         QDialog.__init__(self, parent)
         self.setupUi(self)
         try:
-            self.wh_label.setText(self.wh_label.text() % localize_user_manual_link(
-                'https://manual.calibre-ebook.com/conversion.html#font-size-rescaling'))
+            self.wh_label.setText(self.wh_label.text() % localize_user_manual_link('https://manual.calibre-ebook.com/conversion.html#font-size-rescaling'))
         except TypeError:
             pass  # link already localized
 
-        self.default_font_key       = font_key
+        self.default_font_key = font_key
         self.default_base_font_size = base_font_size
         self.buttonBox.clicked.connect(self.button_clicked)
         self.button_use_default.clicked.connect(self.use_default)
 
-        for x in ('input_base_font_size', 'input_font_size',
-                'output_base_font_size'):
+        for x in ('input_base_font_size', 'input_font_size', 'output_base_font_size'):
             getattr(self, x).valueChanged.connect(self.calculate)
         self.font_size_key.textChanged.connect(self.calculate)
 
@@ -53,9 +46,11 @@ class FontKeyChooser(QDialog, Ui_Dialog):
 
     def get_profile_values(self):
         from calibre.ebooks.conversion.config import load_defaults
+
         recs = load_defaults('page_setup')
         pfname = recs.get('output_profile', 'default')
         from calibre.customize.ui import output_profiles
+
         for profile in output_profiles():
             if profile.short_name == pfname:
                 break
@@ -78,7 +73,7 @@ class FontKeyChooser(QDialog, Ui_Dialog):
         fsize = self.input_font_size.value()
         try:
             fsizes = self.fsizes
-        except:
+        except Exception:
             return
 
         if dbase == 0.0 or not fsizes:
@@ -89,18 +84,20 @@ class FontKeyChooser(QDialog, Ui_Dialog):
                 fsizes = pfs
 
         from calibre.ebooks.oeb.transforms.flatcss import KeyMapper
+
         mapper = KeyMapper(sbase, dbase, fsizes)
         msize = mapper[fsize]
-        self.input_mapped_font_size.setText('%.1f pt'%msize)
+        self.input_mapped_font_size.setText(f'{msize:.1f} pt')
 
     def use_default(self):
         dbase, fsizes = self.get_profile_values()
         self.output_base_font_size.setValue(dbase)
-        self.font_size_key.setText(', '.join(['%.1f'%x for x in fsizes]))
+        self.font_size_key.setText(', '.join([f'{x:.1f}' for x in fsizes]))
 
 
 if __name__ == '__main__':
     from qt.core import QApplication
+
     app = QApplication([])
     d = FontKeyChooser()
     d.exec()

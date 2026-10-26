@@ -1,24 +1,29 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
-
-
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
 
 import re
 
-from qt.core import (QDialog, QDialogButtonBox)
+from qt.core import QCheckBox, QComboBox, QDialog, QDialogButtonBox, QLineEdit
 
 from calibre.gui2.store.stores.mobileread.adv_search_builder_ui import Ui_Dialog
 from calibre.library.caches import CONTAINS_MATCH, EQUALS_MATCH
+from calibre.utils.localization import localize_user_manual_link
 
 
 class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
+    FIELDS: dict[str, str]
+    text: QLineEdit
+    negate: QCheckBox
+    field: QComboBox
 
     def __init__(self, parent):
         QDialog.__init__(self, parent)
         self.setupUi(self)
+        self.search_interface_label.setText(
+            self.search_interface_label.text().format(localize_user_manual_link('https://manual.calibre-ebook.com/gui.html#the-search-interface'))
+        )
 
         self.buttonBox.accepted.connect(self.advanced_search_button_pushed)
         self.tab_2_button_box.accepted.connect(self.accept)
@@ -34,9 +39,13 @@ class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
 
     def tab_changed(self, idx):
         if idx == 1:
-            self.tab_2_button_box.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+            btn = self.tab_2_button_box.button(QDialogButtonBox.StandardButton.Ok)
+            assert btn is not None
+            btn.setDefault(True)
         else:
-            self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setDefault(True)
+            btn = self.buttonBox.button(QDialogButtonBox.StandardButton.Ok)
+            assert btn is not None
+            btn.setDefault(True)
 
     def advanced_search_button_pushed(self):
         self.adv_search_used = True
@@ -74,8 +83,7 @@ class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
             self.mc = '='
         else:
             self.mc = '~'
-        all, any, phrase, none = list(map(lambda x: type(u'')(x.text()),
-                (self.all, self.any, self.phrase, self.none)))
+        all, any, phrase, none = [type('')(x.text()) for x in (self.all, self.any, self.phrase, self.none)]
         all, any, none = list(map(self.tokens, (all, any, none)))
         phrase = phrase.strip()
         all = ' and '.join(all)
@@ -83,7 +91,7 @@ class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
         none = ' and not '.join(none)
         ans = ''
         if phrase:
-            ans += '"%s"'%phrase
+            ans += '"%s"' % phrase
         if all:
             ans += (' and ' if ans else '') + all
         if none:
@@ -93,13 +101,13 @@ class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
         return ans
 
     def token(self):
-        txt = type(u'')(self.text.text()).strip()
+        txt = type('')(self.text.text()).strip()
         if txt:
             if self.negate.isChecked():
-                txt = '!'+txt
-            tok = self.FIELDS[type(u'')(self.field.currentText())]+txt
+                txt = '!' + txt
+            tok = self.FIELDS[type('')(self.field.currentText())] + txt
             if re.search(r'\s', tok):
-                tok = '"%s"'%tok
+                tok = '"%s"' % tok
             return tok
 
     def box_search_string(self):
@@ -113,13 +121,13 @@ class AdvSearchBuilderDialog(QDialog, Ui_Dialog):
 
         ans = []
         self.box_last_values = {}
-        title = type(u'')(self.title_box.text()).strip()
+        title = type('')(self.title_box.text()).strip()
         if title:
             ans.append('title:"' + self.mc + title + '"')
-        author = type(u'')(self.author_box.text()).strip()
+        author = type('')(self.author_box.text()).strip()
         if author:
             ans.append('author:"' + self.mc + author + '"')
-        format = type(u'')(self.format_box.text()).strip()
+        format = type('')(self.format_box.text()).strip()
         if format:
             ans.append('format:"' + self.mc + format + '"')
         if ans:

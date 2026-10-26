@@ -1,17 +1,11 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import textwrap
-from polyglot.builtins import iteritems
 
 # from lxml.etree import Element
-
 from calibre import force_unicode
-from calibre.ebooks.oeb.base import (
-    serialize, OEB_DOCS, barename, OEB_STYLES, XPNSMAP, XHTML, SVG)
+from calibre.ebooks.oeb.base import OEB_DOCS, OEB_STYLES, SVG, XHTML, XPNSMAP, barename, serialize
 from calibre.ebooks.oeb.polish.container import OPF_NAMESPACES
 from calibre.ebooks.oeb.polish.utils import guess_type
 from calibre.utils.icu import sort_key
@@ -22,15 +16,15 @@ def isspace(x):
 
 
 def pretty_xml_tree(elem, level=0, indent='  '):
-    ''' XML beautifier, assumes that elements that have children do not have
+    """XML beautifier, assumes that elements that have children do not have
     textual content.  Also assumes that there is no text immediately after
     closing tags. These are true for opf/ncx and container.xml files. If either
     of the assumptions are violated, there should be no data loss, but pretty
-    printing won't produce optimal results.'''
+    printing won't produce optimal results."""
     if (not elem.text and len(elem) > 0) or (elem.text and isspace(elem.text)):
-        elem.text = '\n' + (indent * (level+1))
+        elem.text = '\n' + (indent * (level + 1))
     for i, child in enumerate(elem):
-        pretty_xml_tree(child, level=level+1, indent=indent)
+        pretty_xml_tree(child, level=level + 1, indent=indent)
         if not child.tail or isspace(child.tail):
             l = level + 1
             if i == len(elem) - 1:
@@ -42,16 +36,17 @@ def pretty_opf(root):
     # Put all dc: tags first starting with title and author. Preserve order for
     # the rest.
     def dckey(x):
-        return {'title':0, 'creator':1}.get(barename(x.tag), 2)
+        return {'title': 0, 'creator': 1}.get(barename(x.tag), 2)
+
     for metadata in root.xpath('//opf:metadata', namespaces=OPF_NAMESPACES):
-        dc_tags = metadata.xpath('./*[namespace-uri()="%s"]' % OPF_NAMESPACES['dc'])
+        dc_tags = metadata.xpath('./*[namespace-uri()="{}"]'.format(OPF_NAMESPACES['dc']))
         dc_tags.sort(key=dckey)
         for x in reversed(dc_tags):
             metadata.insert(0, x)
 
     # Group items in the manifest
     spine_ids = root.xpath('//opf:spine/opf:itemref/@idref', namespaces=OPF_NAMESPACES)
-    spine_ids = {x:i for i, x in enumerate(spine_ids)}
+    spine_ids = {x: i for i, x in enumerate(spine_ids)}
 
     def manifest_key(x):
         mt = x.get('media-type', '')
@@ -66,7 +61,7 @@ def pretty_opf(root):
             cat = 2
         elif mt.startswith('image/'):
             cat = 3
-        elif ext in {'otf', 'ttf', 'woff'}:
+        elif ext in {'otf', 'ttf', 'woff', 'woff2'}:
             cat = 4
         elif mt.startswith('audio/'):
             cat = 5
@@ -77,24 +72,68 @@ def pretty_opf(root):
             i = spine_ids.get(x.get('id', None), 1000000000)
         else:
             i = sort_key(href)
-        return (cat, i)
+        return cat, i
 
     for manifest in root.xpath('//opf:manifest', namespaces=OPF_NAMESPACES):
         try:
             children = sorted(manifest, key=manifest_key)
         except AttributeError:
-            continue  # There are comments so dont sort since that would mess up the comments
+            continue  # There are comments so don't sort since that would mess up the comments
         for x in reversed(children):
             manifest.insert(0, x)
 
 
 SVG_TAG = SVG('svg')
-BLOCK_TAGS = frozenset(map(XHTML, (
-    'address', 'article', 'aside', 'audio', 'blockquote', 'body', 'canvas', 'col', 'colgroup', 'dd',
-    'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
-    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li',
-    'noscript', 'ol', 'output', 'p', 'pre', 'script', 'section', 'style', 'table', 'tbody', 'td',
-    'tfoot', 'th', 'thead', 'tr', 'ul', 'video', 'img'))) | {SVG_TAG}
+NON_NAMESPACED_BLOCK_TAGS = (
+    'address',
+    'article',
+    'aside',
+    'audio',
+    'blockquote',
+    'body',
+    'canvas',
+    'col',
+    'colgroup',
+    'dd',
+    'div',
+    'dl',
+    'dt',
+    'fieldset',
+    'figcaption',
+    'figure',
+    'footer',
+    'form',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'header',
+    'hgroup',
+    'hr',
+    'li',
+    'svg',
+    'noscript',
+    'ol',
+    'output',
+    'p',
+    'pre',
+    'script',
+    'section',
+    'style',
+    'table',
+    'tbody',
+    'td',
+    'tfoot',
+    'th',
+    'thead',
+    'tr',
+    'ul',
+    'video',
+    'img',
+)
+BLOCK_TAGS = frozenset(map(XHTML, NON_NAMESPACED_BLOCK_TAGS))
 
 
 def isblock(x):
@@ -141,15 +180,15 @@ def set_indent(elem, attr, indent):
 
 
 def pretty_block(parent, level=1, indent='  '):
-    ''' Surround block tags with blank lines and recurse into child block tags
-    that contain only other block tags '''
+    """Surround block tags with blank lines and recurse into child block tags
+    that contain only other block tags"""
     if not parent.text or isspace(parent.text):
         parent.text = ''
     nn = '\n' if hasattr(parent.tag, 'strip') and barename(parent.tag) in {'tr', 'td', 'th'} else '\n\n'
     parent.text = parent.text + nn + (indent * level)
     for i, child in enumerate(parent):
         if isblock(child) and has_only_blocks(child):
-            pretty_block(child, level=level+1, indent=indent)
+            pretty_block(child, level=level + 1, indent=indent)
         elif child.tag == SVG_TAG:
             pretty_xml_tree(child, level=level, indent=indent)
         l = level
@@ -181,9 +220,14 @@ def pretty_html_tree(container, root):
         # Special case the handling of a body that contains a single block tag
         # with all content. In this case we prettify the containing block tag
         # even if it has non block children.
-        if (len(body) == 1 and not callable(body[0].tag) and isblock(body[0]) and not has_only_blocks(
-            body[0]) and barename(body[0].tag) not in (
-                    'pre', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6') and len(body[0]) > 0):
+        if (
+            len(body) == 1
+            and not callable(body[0].tag)
+            and isblock(body[0])
+            and not has_only_blocks(body[0])
+            and barename(body[0].tag) not in ('pre', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')
+            and len(body[0]) > 0
+        ):
             pretty_block(body[0], level=2)
 
     if container is not None:
@@ -193,26 +237,26 @@ def pretty_html_tree(container, root):
 
 
 def fix_html(container, raw):
-    ' Fix any parsing errors in the HTML represented as a string in raw. Fixing is done using the HTML5 parsing algorithm. '
+    "Fix any parsing errors in the HTML represented as a string in raw. Fixing is done using the HTML5 parsing algorithm."
     root = container.parse_xhtml(raw)
     return serialize(root, 'text/html')
 
 
 def pretty_html(container, name, raw):
-    ' Pretty print the HTML represented as a string in raw '
+    "Pretty print the HTML represented as a string in raw"
     root = container.parse_xhtml(raw)
     pretty_html_tree(container, root)
     return serialize(root, 'text/html')
 
 
 def pretty_css(container, name, raw):
-    ' Pretty print the CSS represented as a string in raw '
+    "Pretty print the CSS represented as a string in raw"
     sheet = container.parse_css(raw)
     return serialize(sheet, 'text/css')
 
 
 def pretty_xml(container, name, raw):
-    ' Pretty print the XML represented as a string in raw. If ``name`` is the name of the OPF, extra OPF-specific prettying is performed. '
+    "Pretty print the XML represented as a string in raw. If ``name`` is the name of the OPF, extra OPF-specific prettying is performed."
     root = container.parse_xml(raw)
     if name == container.opf_name:
         pretty_opf(root)
@@ -221,17 +265,17 @@ def pretty_xml(container, name, raw):
 
 
 def fix_all_html(container):
-    ' Fix any parsing errors in all HTML files in the container. Fixing is done using the HTML5 parsing algorithm. '
-    for name, mt in iteritems(container.mime_map):
+    "Fix any parsing errors in all HTML files in the container. Fixing is done using the HTML5 parsing algorithm."
+    for name, mt in container.mime_map.items():
         if mt in OEB_DOCS:
             container.parsed(name)
             container.dirty(name)
 
 
 def pretty_all(container):
-    ' Pretty print all HTML/CSS/XML files in the container '
+    "Pretty print all HTML/CSS/XML files in the container"
     xml_types = {guess_type('a.ncx'), guess_type('a.xml'), guess_type('a.svg')}
-    for name, mt in iteritems(container.mime_map):
+    for name, mt in container.mime_map.items():
         prettied = False
         if mt in OEB_DOCS:
             pretty_html_tree(container, container.parsed(name))

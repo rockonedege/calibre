@@ -1,14 +1,12 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2012, Kovid Goyal <kovid at kovidgoyal.net>
 
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+import os
+import re
+import sys
 
-import os, sys, re
-
-from calibre.prints import is_binary
 from calibre.constants import iswindows
-from polyglot.builtins import iteritems
+from calibre.prints import is_binary
 
 if iswindows:
     import ctypes.wintypes
@@ -19,12 +17,12 @@ if iswindows:
             ('dwCursorPosition', ctypes.wintypes._COORD),
             ('wAttributes', ctypes.wintypes.WORD),
             ('srWindow', ctypes.wintypes._SMALL_RECT),
-            ('dwMaximumWindowSize', ctypes.wintypes._COORD)
+            ('dwMaximumWindowSize', ctypes.wintypes._COORD),
         ]
 
 
 def fmt(code):
-    return '\033[%dm' % code
+    return f'\x1b[{code}m'
 
 
 def polyglot_write(stream, is_binary, encoding, text):
@@ -41,36 +39,22 @@ def polyglot_write(stream, is_binary, encoding, text):
     return stream.write(text)
 
 
-RATTRIBUTES = dict(
-        zip(range(1, 9), (
-            'bold',
-            'dark',
-            '',
-            'underline',
-            'blink',
-            '',
-            'reverse',
-            'concealed'
-            )
-        ))
-ATTRIBUTES = {v:fmt(k) for k, v in iteritems(RATTRIBUTES)}
+RATTRIBUTES = dict(zip(range(1, 9), ('bold', 'dark', '', 'underline', 'blink', '', 'reverse', 'concealed')))
+ATTRIBUTES = {v: fmt(k) for k, v in RATTRIBUTES.items()}
 del ATTRIBUTES['']
 
 RBACKGROUNDS = dict(
-        zip(range(41, 48), (
-            'red',
-            'green',
-            'yellow',
-            'blue',
-            'magenta',
-            'cyan',
-            'white'
-            ),
-    ))
-BACKGROUNDS = {v:fmt(k) for k, v in iteritems(RBACKGROUNDS)}
+    zip(
+        range(41, 48),
+        ('red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'),
+    )
+)
+BACKGROUNDS = {v: fmt(k) for k, v in RBACKGROUNDS.items()}
 
 RCOLORS = dict(
-        zip(range(31, 38), (
+    zip(
+        range(31, 38),
+        (
             'red',
             'green',
             'yellow',
@@ -78,9 +62,10 @@ RCOLORS = dict(
             'magenta',
             'cyan',
             'white',
-            ),
-        ))
-COLORS = {v:fmt(k) for k, v in iteritems(RCOLORS)}
+        ),
+    )
+)
+COLORS = {v: fmt(k) for k, v in RCOLORS.items()}
 
 RESET = fmt(0)
 
@@ -102,11 +87,10 @@ def colored(text, fg=None, bg=None, bold=False):
 
 
 class Detect:
-
     def __init__(self, stream):
         self.stream = stream or sys.stdout
         self.is_binary = is_binary(self.stream)
-        self.isatty = getattr(self.stream, 'isatty', lambda : False)()
+        self.isatty = getattr(self.stream, 'isatty', lambda: False)()
         force_ansi = 'CALIBRE_FORCE_ANSI' in os.environ
         if not self.isatty and force_ansi:
             self.isatty = True
@@ -114,7 +98,6 @@ class Detect:
 
 
 class ColoredStream(Detect):
-
     def __init__(self, stream=None, fg=None, bg=None, bold=False):
         Detect.__init__(self, stream)
         self.fg, self.bg, self.bold = fg, bg, bold
@@ -123,9 +106,8 @@ class ColoredStream(Detect):
         if self.is_binary:
             if not isinstance(what, bytes):
                 what = what.encode('utf-8')
-        else:
-            if isinstance(what, bytes):
-                what = what.decode('utf-8', 'replace')
+        elif isinstance(what, bytes):
+            what = what.decode('utf-8', 'replace')
         self.stream.write(what)
 
     def __enter__(self):
@@ -151,7 +133,6 @@ class ColoredStream(Detect):
 
 
 class ANSIStream(Detect):
-
     ANSI_RE = r'\033\[((?:\d|;)*)([a-zA-Z])'
 
     def __init__(self, stream=None):
@@ -194,50 +175,54 @@ def windows_terminfo():
     from ctypes.wintypes import SHORT, WORD
 
     class COORD(Structure):
-
         """struct in wincon.h"""
+
         _fields_ = [
             ('X', SHORT),
             ('Y', SHORT),
         ]
 
     class SMALL_RECT(Structure):
-
         """struct in wincon.h."""
+
         _fields_ = [
-            ("Left", SHORT),
-            ("Top", SHORT),
-            ("Right", SHORT),
-            ("Bottom", SHORT),
+            ('Left', SHORT),
+            ('Top', SHORT),
+            ('Right', SHORT),
+            ('Bottom', SHORT),
         ]
 
     class CONSOLE_SCREEN_BUFFER_INFO(Structure):
-
         """struct in wincon.h."""
+
         _fields_ = [
-            ("dwSize", COORD),
-            ("dwCursorPosition", COORD),
-            ("wAttributes", WORD),
-            ("srWindow", SMALL_RECT),
-            ("dwMaximumWindowSize", COORD),
+            ('dwSize', COORD),
+            ('dwCursorPosition', COORD),
+            ('wAttributes', WORD),
+            ('srWindow', SMALL_RECT),
+            ('dwMaximumWindowSize', COORD),
         ]
+
     csbi = CONSOLE_SCREEN_BUFFER_INFO()
     import msvcrt
+
     file_handle = msvcrt.get_osfhandle(sys.stdout.fileno())
     from ctypes import windll
-    success = windll.kernel32.GetConsoleScreenBufferInfo(file_handle,
-                                                         byref(csbi))
+
+    success = windll.kernel32.GetConsoleScreenBufferInfo(file_handle, byref(csbi))
     if not success:
         raise Exception('stdout is not a console?')
     return csbi
 
 
 def get_term_geometry():
-    import fcntl, termios, struct
+    import fcntl
+    import struct
+    import termios
 
     def ioctl_GWINSZ(fd):
         try:
-            return struct.unpack(b'HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0'*8))[:2]
+            return struct.unpack(b'HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\0' * 8))[:2]
         except Exception:
             return None, None
 
@@ -261,10 +246,9 @@ def get_term_geometry():
 def geometry():
     if iswindows:
         try:
-
             ti = windows_terminfo()
             return (ti.dwSize.X or 80, ti.dwSize.Y or 25)
-        except:
+        except Exception:
             return 80, 25
     else:
         try:
@@ -279,10 +263,20 @@ def geometry():
 def test():
     s = ANSIStream()
 
-    text = [colored(t, fg=t)+'. '+colored(t, fg=t, bold=True)+'.' for t in
-            ('red', 'yellow', 'green', 'white', 'cyan', 'magenta', 'blue',)]
+    text = [
+        colored(t, fg=t) + '. ' + colored(t, fg=t, bold=True) + '.'
+        for t in (
+            'red',
+            'yellow',
+            'green',
+            'white',
+            'cyan',
+            'magenta',
+            'blue',
+        )
+    ]
     s.write('\n'.join(text))
-    u = '\u041c\u0438\u0445\u0430\u0438\u043b fällen'
+    u = 'Михаил fällen'
     print()
     s.write(u)
     print()

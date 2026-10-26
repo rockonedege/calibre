@@ -1,17 +1,14 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import threading, re, json
+import json
+import re
+import threading
 
 from calibre import browser
 
 
 class xISBN:
-
     '''
     This class is used to find the ISBN numbers of "related" editions of a
     book, given its ISBN. Useful when querying services for metadata by ISBN,
@@ -34,7 +31,7 @@ class xISBN:
         # xisbn service has been de-comissioned see
         # https://www.oclc.org/developer/news/2018/xid-decommission.en.html
         return []
-        url = self.QUERY%isbn
+        url = self.QUERY % isbn
         data = browser().open_novisit(url).read()
         data = json.loads(data)
         if data.get('stat', None) != 'ok':
@@ -59,8 +56,9 @@ class xISBN:
             if isbn not in self._map:
                 try:
                     data = self.fetch_data(isbn)
-                except:
+                except Exception:
                     import traceback
+
                     traceback.print_exc()
                     data = []
                 id_ = len(self._data)
@@ -89,9 +87,8 @@ class xISBN:
         for x in data:
             try:
                 year = int(x['year'])
-                if year < min_year:
-                    min_year = year
-            except:
+                min_year = min(min_year, year)
+            except Exception:
                 continue
         if min_year == 100000:
             min_year = None
@@ -101,7 +98,9 @@ class xISBN:
 xisbn = xISBN()
 
 if __name__ == '__main__':
-    import sys, pprint
+    import pprint
+    import sys
+
     isbn = sys.argv[-1]
     print(pprint.pprint(xisbn.get_data(isbn)))
     print()

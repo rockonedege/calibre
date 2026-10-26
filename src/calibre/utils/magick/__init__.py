@@ -1,14 +1,7 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-from calibre.utils.magick.legacy import Image, PixelWand
-
-if False:
-    PixelWand
+from calibre.utils.magick.legacy import Image, PixelWand  # ruff: ignore[unused-import]
 
 
 def create_canvas(width, height, bgcolor='#ffffff'):

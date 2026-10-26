@@ -1,18 +1,16 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 from functools import partial
 
-from qt.core import (QTimer, QApplication, Qt, QEvent, QDialog, QMenu, QIcon,
-                     QDialogButtonBox, QPushButton, QLabel, QGridLayout)
+from qt.core import QApplication, QDialog, QDialogButtonBox, QEvent, QGridLayout, QIcon, QLabel, QMenu, QPushButton, Qt
 
 from calibre.gui2 import error_dialog
-from calibre.gui2.actions import InterfaceAction
+from calibre.gui2.actions import InterfaceActionWithLibraryDrop
 from calibre.gui2.widgets2 import HistoryComboBox
+from calibre.startup import connect_lambda
 from calibre.utils.icu import sort_key
+from calibre.utils.localization import _
 
 
 class MyHistoryComboBox(HistoryComboBox):
@@ -23,7 +21,6 @@ class MyHistoryComboBox(HistoryComboBox):
 
 
 class MarkWithTextDialog(QDialog):
-
     def __init__(self, gui):
         QDialog.__init__(self, parent=gui)
         self.gui = gui
@@ -36,29 +33,28 @@ class MarkWithTextDialog(QDialog):
         textbox.initialize('mark_with_text')
 
         history = textbox.all_items
-        button_rows = min(4, len(history)-1)
-        for i in range(0, button_rows):
+        button_rows = min(4, len(history) - 1)
+        for i in range(button_rows):
             if i == 0:
                 layout.addWidget(QLabel(_('Recently used values:')), 0, 0, 1, 2)
             button = QPushButton()
-            text = history[i+1]
+            text = history[i + 1]
             button.setText(text)
             button.clicked.connect(partial(self.button_pushed, text=text))
             row = i + 1
             layout.addWidget(button, row, 1)
-            label = QLabel('&' + str(row+1))
+            label = QLabel('&' + str(row + 1))
             label.setBuddy(button)
             layout.addWidget(label, row, 0)
         if button_rows > 0:
-            layout.addWidget(QLabel(_('Enter a value:')), button_rows+1, 0, 1, 2)
+            layout.addWidget(QLabel(_('Enter a value:')), button_rows + 1, 0, 1, 2)
         textbox.show_initial_value(history[0] if history else '')
-        layout.addWidget(textbox, button_rows+2, 1)
+        layout.addWidget(textbox, button_rows + 2, 1)
         textbox.setFocus()
-        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
-                                      QDialogButtonBox.StandardButton.Cancel)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box, button_rows+3, 0, 1, 2)
+        layout.addWidget(button_box, button_rows + 3, 0, 1, 2)
 
     def text(self):
         return self.text_box.text().strip()
@@ -79,35 +75,13 @@ class MarkWithTextDialog(QDialog):
 mark_books_with_text = None
 
 
-class MarkBooksAction(InterfaceAction):
-
+class MarkBooksAction(InterfaceActionWithLibraryDrop):
     name = 'Mark Books'
     action_spec = (_('Mark books'), 'marked.png', _('Temporarily mark books for easy access'), 'Ctrl+M')
     action_type = 'current'
     action_add_menu = True
-    dont_add_to = frozenset([
-        'context-menu-device', 'menubar-device', 'context-menu-cover-browser'])
+    dont_add_to = frozenset(['context-menu-device', 'menubar-device', 'context-menu-cover-browser'])
     action_menu_clone_qaction = _('Toggle mark for selected books')
-
-    accepts_drops = True
-
-    def accept_enter_event(self, event, mime_data):
-        if mime_data.hasFormat("application/calibre+from_library"):
-            return True
-        return False
-
-    def accept_drag_move_event(self, event, mime_data):
-        if mime_data.hasFormat("application/calibre+from_library"):
-            return True
-        return False
-
-    def drop_event(self, event, mime_data):
-        mime = 'application/calibre+from_library'
-        if mime_data.hasFormat(mime):
-            self.dropped_ids = tuple(map(int, mime_data.data(mime).data().split()))
-            QTimer.singleShot(1, self.do_drop)
-            return True
-        return False
 
     def do_drop(self):
         book_ids = self.dropped_ids
@@ -119,8 +93,11 @@ class MarkBooksAction(InterfaceAction):
         self.search_icon = QIcon.ic('search.png')
         self.qaction.triggered.connect(self.toggle_selected)
         self.menu = m = self.qaction.menu()
+        assert m is not None
         m.aboutToShow.connect(self.about_to_show_menu)
         ma = partial(self.create_menu_action, m)
+        self.show_marked_action = a = ma('mark_selected', _('Mark all selected books'), icon='marked.png')
+        a.triggered.connect(self.mark_all_selected)
         self.show_marked_action = a = ma('mark_with_text', _('Mark books with text label'), icon='marked.png')
         a.triggered.connect(partial(self.mark_with_text, book_ids=None))
         global mark_books_with_text
@@ -146,15 +123,15 @@ class MarkBooksAction(InterfaceAction):
         connect_lambda(a.triggered, self, lambda self: self.mark_field('series', False))
 
     def gui_layout_complete(self):
-        for x in self.gui.bars_manager.main_bars + self.gui.bars_manager.child_bars:
+        for x in self.gui.bars_manager.bars:
             try:
                 w = x.widgetForAction(self.qaction)
                 w.installEventFilter(self)
-            except:
+            except Exception:
                 continue
 
-    def eventFilter(self, obj, ev):
-        if ev.type() == QEvent.Type.MouseButtonPress and ev.button() == Qt.MouseButton.LeftButton:
+    def eventFilter(self, a0, a1):
+        if a1.type() == QEvent.Type.MouseButtonPress and a1.button() == Qt.MouseButton.LeftButton:
             mods = QApplication.keyboardModifiers()
             if mods & Qt.KeyboardModifier.ControlModifier or mods & Qt.KeyboardModifier.ShiftModifier:
                 self.show_marked()
@@ -165,22 +142,22 @@ class MarkBooksAction(InterfaceAction):
         db = self.gui.current_db
         marked_ids = db.data.marked_ids
         num = len(frozenset(marked_ids).intersection(db.new_api.all_book_ids()))
-        text = _('Show marked book') if num == 1 else (_('Show marked books') + (' (%d)' % num))
+        text = _('Show marked book') if num == 1 else (_('Show marked books') + f' ({num})')
         self.show_marked_action.setText(text)
-        counts = dict()
+        counts = {}
         for v in marked_ids.values():
             counts[v] = counts.get(v, 0) + 1
         labels = sorted(counts.keys(), key=sort_key)
         self.show_marked_with_text.clear()
-        if len(labels):
+        if labels:
             labs = labels[0:40]
             self.show_marked_with_text.setEnabled(True)
             for t in labs:
                 ac = self.show_marked_with_text.addAction(self.search_icon, f'{t} ({counts[t]})')
+                assert ac is not None
                 ac.triggered.connect(partial(self.show_marked_text, txt=t))
             if len(labs) < len(labels):
-                self.show_marked_with_text.addAction(
-                    _('{0} labels not shown').format(len(labels) - len(labs)))
+                self.show_marked_with_text.addAction(_('{0} labels not shown').format(len(labels) - len(labs)))
         else:
             self.show_marked_with_text.setEnabled(False)
 
@@ -188,6 +165,7 @@ class MarkBooksAction(InterfaceAction):
         enabled = loc == 'library'
         self.qaction.setEnabled(enabled)
         self.menuless_qaction.setEnabled(enabled)
+        assert self.menu is not None
         for action in self.menu.actions():
             action.setEnabled(enabled)
 
@@ -240,16 +218,22 @@ class MarkBooksAction(InterfaceAction):
                 mids.pop(book_id, None)
         db.data.set_marked_ids(mids)
 
+    def mark_all_selected(self):
+        book_ids = self._get_selected_ids()
+        if not book_ids:
+            return
+        self.gui.current_db.data.add_marked_ids(book_ids)
+
     def mark_with_text(self, book_ids=None):
         if book_ids is None:
             book_ids = self._get_selected_ids()
         if not book_ids:
             return
         dialog = MarkWithTextDialog(self.gui)
-        if dialog.exec_() != QDialog.DialogCode.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         txt = dialog.text()
-        txt = txt if txt else 'true'
+        txt = txt or 'true'
         db = self.gui.current_db
         mids = db.data.marked_ids.copy()
         for book_id in book_ids:

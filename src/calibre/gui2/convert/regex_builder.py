@@ -3,10 +3,8 @@
 
 import os
 from contextlib import suppress
-from qt.core import (
-    QApplication, QBrush, QByteArray, QDialog, QDialogButtonBox, Qt, QTextCursor,
-    QTextEdit, pyqtSignal
-)
+
+from qt.core import QBrush, QDialog, QDialogButtonBox, Qt, QTextCursor, QTextEdit, pyqtSignal
 
 from calibre.constants import iswindows
 from calibre.ebooks.conversion.search_replace import compile_regular_expression
@@ -14,14 +12,14 @@ from calibre.gui2 import choose_files, error_dialog, gprefs
 from calibre.gui2.convert.regex_builder_ui import Ui_RegexBuilder
 from calibre.gui2.convert.xpath_wizard import XPathEdit
 from calibre.gui2.dialogs.choose_format import ChooseFormatDialog
+from calibre.gui2.widgets2 import to_plain_text
 from calibre.ptempfile import TemporaryFile
 from calibre.utils.icu import utf16_length
 from calibre.utils.ipc.simple_worker import WorkerError, fork_job
-from polyglot.builtins import native_string_type
+from calibre.utils.localization import _
 
 
 class RegexBuilder(QDialog, Ui_RegexBuilder):
-
     def __init__(self, db, book_id, regex, doc=None, parent=None):
         QDialog.__init__(self, parent)
         self.setupUi(self)
@@ -31,6 +29,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
 
         if not db or not book_id:
             button = self.button_box.addButton(QDialogButtonBox.StandardButton.Open)
+            assert button is not None
             button.clicked.connect(self.open_clicked)
         elif not doc and not self.select_format(db, book_id):
             self.cancelled = True
@@ -41,34 +40,29 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
 
         self.cancelled = False
         self.button_box.accepted.connect(self.accept)
-        self.regex.textChanged[native_string_type].connect(self.regex_valid)
-        for src, slot in (('test', 'do'), ('previous', 'goto'), ('next',
-            'goto')):
-            getattr(self, src).clicked.connect(getattr(self, '%s_%s'%(slot,
-                src)))
+        self.regex.textChanged[str].connect(self.regex_valid)
+        for src, slot in (('test', 'do'), ('previous', 'goto'), ('next', 'goto')):
+            getattr(self, src).clicked.connect(getattr(self, f'{slot}_{src}'))
         self.test.setDefault(True)
 
         self.match_locs = []
-        geom = gprefs.get('regex_builder_geometry', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, QByteArray(geom))
+        self.restore_geometry(gprefs, 'regex_builder_geometry')
         self.finished.connect(self.save_state)
 
     def save_state(self, result):
-        geom = bytearray(self.saveGeometry())
-        gprefs['regex_builder_geometry'] = geom
+        self.save_geometry(gprefs, 'regex_builder_geometry')
 
     def regex_valid(self):
         regex = str(self.regex.text())
         if regex:
             try:
                 compile_regular_expression(regex)
-                self.regex.setStyleSheet('QLineEdit { color: black; background-color: rgba(0,255,0,20%); }')
+                self.regex.setStyleSheet('QLineEdit { background-color: rgba(0,255,0,20%); }')
                 return True
-            except:
-                self.regex.setStyleSheet('QLineEdit { color: black; background-color: rgba(255,0,0,20%); }')
+            except Exception:
+                self.regex.setStyleSheet('QLineEdit { background-color: rgba(255,0,0,20%); }')
         else:
-            self.regex.setStyleSheet('QLineEdit { color: black; background-color: white; }')
+            self.regex.setStyleSheet('')
             self.preview.setExtraSelections([])
 
         self.match_locs = []
@@ -87,7 +81,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
             qt: int = 0
 
         if self.regex_valid():
-            text = str(self.preview.toPlainText())
+            text = to_plain_text(self.preview)
             regex = str(self.regex.text())
             cursor = QTextCursor(self.preview.document())
             extsel = QTextEdit.ExtraSelection()
@@ -97,7 +91,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
                 prev = Pos()
                 for match in compile_regular_expression(regex).finditer(text):
                     es = QTextEdit.ExtraSelection(extsel)
-                    qtchars_to_start = utf16_length(text[prev.python:match.start()])
+                    qtchars_to_start = utf16_length(text[prev.python : match.start()])
                     qt_pos = prev.qt + qtchars_to_start
                     prev.python = match.end()
                     prev.qt = qt_pos + utf16_length(match.group())
@@ -123,7 +117,8 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
             self.goto_loc(
                 self.match_locs[match_loc][1],
                 operation=QTextCursor.MoveOperation.Left,
-                n=self.match_locs[match_loc][1] - self.match_locs[match_loc][0])
+                n=self.match_locs[match_loc][1] - self.match_locs[match_loc][0],
+            )
 
     def goto_next(self):
         pos = self.preview.textCursor().position()
@@ -157,20 +152,26 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
                 return False
 
         if not format:
-            error_dialog(self, _('No formats available'),
-                         _('Cannot build regex using the GUI builder without a book.'),
-                         show=True)
+            error_dialog(
+                self,
+                _('No formats available'),
+                _('Cannot build regex using the GUI builder without a book.'),
+                show=True,
+            )
             return False
         try:
-            fpath = db.format(book_id, format, index_is_id=True,
-                as_path=True)
+            fpath = db.format(book_id, format, index_is_id=True, as_path=True)
         except OSError:
             if iswindows:
                 import traceback
-                error_dialog(self, _('Could not open file'),
-                    _('Could not open the file, do you have it open in'
-                        ' another program?'), show=True,
-                    det_msg=traceback.format_exc())
+
+                error_dialog(
+                    self,
+                    _('Could not open file'),
+                    _('Could not open the file, do you have it open in another program?'),
+                    show=True,
+                    det_msg=traceback.format_exc(),
+                )
                 return False
             raise
         try:
@@ -178,7 +179,7 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
         finally:
             try:
                 os.remove(fpath)
-            except:
+            except Exception:
                 # Fails on windows if the input plugin for this format keeps the file open
                 # Happens for LIT files
                 pass
@@ -186,38 +187,35 @@ class RegexBuilder(QDialog, Ui_RegexBuilder):
 
     def open_book(self, pathtoebook):
         with TemporaryFile('_prepprocess_gui') as tf:
-            err_msg = _('Failed to generate markup for testing. Click '
-                            '"Show details" to learn more.')
+            err_msg = _('Failed to generate markup for testing. Click "Show details" to learn more.')
             try:
-                fork_job('calibre.ebooks.oeb.iterator', 'get_preprocess_html',
-                    (pathtoebook, tf))
+                fork_job('calibre.ebooks.oeb.iterator', 'get_preprocess_html', (pathtoebook, tf))
             except WorkerError as e:
-                return error_dialog(self, _('Failed to generate preview'),
-                        err_msg, det_msg=e.orig_tb, show=True)
-            except:
+                return error_dialog(self, _('Failed to generate preview'), err_msg, det_msg=str(e) + '\n\n' + e.orig_tb, show=True)
+            except Exception:
                 import traceback
-                return error_dialog(self, _('Failed to generate preview'),
-                        err_msg, det_msg=traceback.format_exc(), show=True)
+
+                return error_dialog(self, _('Failed to generate preview'), err_msg, det_msg=traceback.format_exc(), show=True)
             with open(tf, 'rb') as f:
                 self.preview.setPlainText(f.read().decode('utf-8'))
 
     def open_clicked(self):
-        files = choose_files(self, 'regexp tester dialog', _('Open book'),
-                select_only_single_file=True)
+        files = choose_files(self, 'regexp tester dialog', _('Open book'), select_only_single_file=True)
         if files:
             self.open_book(files[0])
 
     def doc(self):
-        return str(self.preview.toPlainText())
+        return to_plain_text(self.preview)
 
 
 class RegexEdit(XPathEdit):
-
     doc_update = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.edit.completer().setCaseSensitivity(Qt.CaseSensitivity.CaseSensitive)
+        _completer = self.edit.completer()
+        assert _completer is not None
+        _completer.setCaseSensitivity(Qt.CaseSensitivity.CaseSensitive)
         self.book_id = None
         self.db = None
         self.doc_cache = None
@@ -227,8 +225,7 @@ class RegexEdit(XPathEdit):
 
     def builder(self):
         if self.db is None:
-            self.doc_cache = _('Click the "Open" button below to open a '
-                    'e-book to use for testing.')
+            self.doc_cache = _('Click the "Open" button below to open a e-book to use for testing.')
         bld = RegexBuilder(self.db, self.book_id, self.edit.text(), self.doc_cache, self)
         if bld.cancelled:
             return
@@ -241,10 +238,11 @@ class RegexEdit(XPathEdit):
     def doc(self):
         return self.doc_cache
 
-    def setObjectName(self, *args):
+    def setObjectName(self, name=None):
+        args = (name,)
         super().setObjectName(*args)
         if hasattr(self, 'edit'):
-            self.edit.initialize('regex_edit_'+str(self.objectName()))
+            self.edit.initialize('regex_edit_' + str(self.objectName()))
 
     def set_msg(self, msg):
         self.msg.setText(msg)
@@ -265,7 +263,7 @@ class RegexEdit(XPathEdit):
         self.db = self.doc_cache = None
 
     @property
-    def text(self):
+    def text(self):  # ty: ignore[invalid-property-type-override]
         return str(self.edit.text())
 
     @property
@@ -281,6 +279,7 @@ class RegexEdit(XPathEdit):
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
+
     app = Application([])
     d = RegexBuilder(None, None, 'a', doc='😉123abc XYZabc')
     d.do_test()

@@ -1,18 +1,18 @@
-'''
+"""
 Created on 4 Jun 2010
 
 @author: charles
-'''
+"""
 
-import json, traceback
+import json
+import traceback
 from datetime import datetime, time
 
-from calibre.ebooks.metadata.book import SERIALIZABLE_FIELDS
 from calibre.constants import filesystem_encoding, preferred_encoding
+from calibre.ebooks.metadata.book import SERIALIZABLE_FIELDS
 from calibre.library.field_metadata import FieldMetadata
-from calibre import isbytestring
-from polyglot.builtins import iteritems, itervalues, as_bytes
 from polyglot.binary import as_base64_unicode, from_base64_bytes
+from polyglot.builtins import as_bytes
 
 # Translate datetimes to and from strings. The string form is the datetime in
 # UTC. The returned date is also UTC
@@ -20,7 +20,8 @@ from polyglot.binary import as_base64_unicode, from_base64_bytes
 
 def string_to_datetime(src):
     from calibre.utils.iso8601 import parse_iso8601
-    if src != "None":
+
+    if src != 'None':
         try:
             return parse_iso8601(src)
         except Exception:
@@ -29,23 +30,25 @@ def string_to_datetime(src):
 
 
 def datetime_to_string(dateval):
-    from calibre.utils.date import isoformat, UNDEFINED_DATE, local_tz
+    from calibre.utils.date import UNDEFINED_DATE, isoformat, local_tz
+
     if dateval is None:
-        return "None"
+        return 'None'
     if not isinstance(dateval, datetime):
         dateval = datetime.combine(dateval, time())
-    if hasattr(dateval, 'tzinfo') and dateval.tzinfo is None:
+    if dateval.tzinfo is None:
         dateval = dateval.replace(tzinfo=local_tz)
     if dateval <= UNDEFINED_DATE:
-        return "None"
+        return 'None'
     return isoformat(dateval)
 
 
 def encode_thumbnail(thumbnail):
-    '''
+    """
     Encode the image part of a thumbnail, then return the 3 part tuple
-    '''
+    """
     from calibre.utils.imghdr import identify
+
     if thumbnail is None:
         return None
     if not isinstance(thumbnail, (tuple, list)):
@@ -60,9 +63,9 @@ def encode_thumbnail(thumbnail):
 
 
 def decode_thumbnail(tup):
-    '''
+    """
     Decode an encoded thumbnail into its 3 component parts
-    '''
+    """
     if tup is None:
         return None
     return (tup[0], tup[1], from_base64_bytes(tup[2]))
@@ -73,10 +76,10 @@ def object_to_unicode(obj, enc=preferred_encoding):
     def dec(x):
         return x.decode(enc, 'replace')
 
-    if isbytestring(obj):
+    if isinstance(obj, bytes):
         return dec(obj)
     if isinstance(obj, (list, tuple)):
-        return [dec(x) if isbytestring(x) else object_to_unicode(x) for x in obj]
+        return [dec(x) if isinstance(x, bytes) else object_to_unicode(x) for x in obj]
     if isinstance(obj, dict):
         ans = {}
         for k, v in obj.items():
@@ -95,38 +98,34 @@ def encode_is_multiple(fm):
         if dt == 'composite':
             fm['is_multiple'] = ','
         else:
-            fm['is_multiple'] =  '|'
+            fm['is_multiple'] = '|'
     else:
         fm['is_multiple'] = None
         fm['is_multiple2'] = {}
 
 
 def decode_is_multiple(fm):
-    im = fm.get('is_multiple2',  None)
+    im = fm.get('is_multiple2', None)
     if im:
         fm['is_multiple'] = im
         del fm['is_multiple2']
     else:
         # Must migrate the is_multiple from char to dict
-        im = fm.get('is_multiple',  {})
+        im = fm.get('is_multiple', {})
         if im:
             dt = fm.get('datatype', None)
             if dt == 'composite':
-                im = {'cache_to_list': ',', 'ui_to_list': ',',
-                      'list_to_ui': ', '}
+                im = {'cache_to_list': ',', 'ui_to_list': ',', 'list_to_ui': ', '}
             elif fm.get('display', {}).get('is_names', False):
-                im = {'cache_to_list': '|', 'ui_to_list': '&',
-                      'list_to_ui': ', '}
+                im = {'cache_to_list': '|', 'ui_to_list': '&', 'list_to_ui': ', '}
             else:
-                im = {'cache_to_list': '|', 'ui_to_list': ',',
-                      'list_to_ui': ', '}
+                im = {'cache_to_list': '|', 'ui_to_list': ',', 'list_to_ui': ', '}
         elif im is None:
             im = {}
         fm['is_multiple'] = im
 
 
 class JsonCodec:
-
     def __init__(self, field_metadata=None):
         self.field_metadata = field_metadata or FieldMetadata()
 
@@ -151,7 +150,7 @@ class JsonCodec:
     def encode_metadata_attr(self, book, key):
         if key == 'user_metadata':
             meta = book.get_all_user_metadata(make_copy=True)
-            for fm in itervalues(meta):
+            for fm in meta.values():
                 if fm['datatype'] == 'datetime':
                     fm['#value#'] = datetime_to_string(fm['#value#'])
                 encode_is_multiple(fm)
@@ -163,7 +162,7 @@ class JsonCodec:
         value = book.get(key)
         if key == 'thumbnail':
             return encode_thumbnail(value)
-        elif isbytestring(value):  # str includes bytes
+        elif isinstance(value, bytes):  # str includes bytes
             enc = filesystem_encoding if key == 'lpath' else preferred_encoding
             return object_to_unicode(value, enc=enc)
         elif datatype == 'datetime':
@@ -179,14 +178,14 @@ class JsonCodec:
                 entry = self.raw_to_book(item, book_class, prefix)
                 if entry is not None:
                     booklist.append(entry)
-        except:
+        except Exception:
             print('exception during JSON decode_from_file')
             traceback.print_exc()
 
     def raw_to_book(self, json_book, book_class, prefix):
         try:
             book = book_class(prefix, json_book.get('lpath', None))
-            for key,val in iteritems(json_book):
+            for key, val in json_book.items():
                 meta = self.decode_metadata(key, val)
                 if key == 'user_metadata':
                     book.set_all_user_metadata(meta)
@@ -195,7 +194,7 @@ class JsonCodec:
                         key = 'identifiers'
                     setattr(book, key, meta)
             return book
-        except:
+        except Exception:
             print('exception during JSON decoding')
             traceback.print_exc()
 
@@ -203,7 +202,7 @@ class JsonCodec:
         if key == 'classifiers':
             key = 'identifiers'
         if key == 'user_metadata':
-            for fm in itervalues(value):
+            for fm in value.values():
                 if fm['datatype'] == 'datetime':
                     fm['#value#'] = string_to_datetime(fm['#value#'])
                 decode_is_multiple(fm)

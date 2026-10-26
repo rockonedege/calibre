@@ -3,26 +3,41 @@
 from __python__ import bound_methods, hash_literals
 
 from elementmaker import E
+from gettext import gettext as _, ngettext
 
 from book_list.globals import get_session_data
 from book_list.theme import get_color
 from book_list.top_bar import create_top_bar
 from complete import create_search_bar
 from dom import clear, add_extra_css, build_rule
-from gettext import gettext as _, ngettext
 from modals import error_dialog
 from read_book.globals import current_book, ui_operations
 from read_book.search_worker import (
     CONNECT_FAILED, DB_ERROR, GET_SPINE_FAILED, UNHANDLED_ERROR, worker_main
 )
 from read_book.shortcuts import shortcut_for_key_event
-from widgets import create_button, create_spinner
+from widgets import create_button, create_spinner, create_select
 from worker import start_worker
+
+
+def parse_error_msg(msg):
+    details = msg.msg
+    emsg = _('Unknown error')
+    if msg.code is GET_SPINE_FAILED:
+        emsg = _('Loading text from the book failed.')
+    elif msg.code is CONNECT_FAILED:
+        emsg = _('Connecting to database storing the local copy of the book failed in the worker thread.')
+    elif msg.code is UNHANDLED_ERROR:
+        emsg = _('There was an unhandled error while searching.')
+    elif msg.code is DB_ERROR:
+        emsg = msg.error.msg
+        details = msg.error.details
+    return emsg, details
 
 
 def get_toc_data(book):
     spine = book.manifest.spine
-    spine_toc_map = {name: v'[]' for name in spine}
+    spine_toc_map = {name: [] for name in spine}
     parent_map = {}
     toc_id_map = {}
 
@@ -48,7 +63,6 @@ def get_toc_data(book):
 
 
 class SearchOverlay:
-
     display_type = 'flex'
     CONTAINER_ID = 'book-search-overlay'
 
@@ -68,6 +82,7 @@ class SearchOverlay:
         c.style.userSelect = 'none'
         c.addEventListener('keydown', self.onkeydown)
         c.addEventListener('keyup', self.onkeyup)
+        self.result_handler = None
 
         create_top_bar(c, title=_('Search in book'), action=self.hide, icon='close')
 
@@ -80,32 +95,26 @@ class SearchOverlay:
         c.lastChild.firstChild.style.flexGrow = '100'
         sd = get_session_data()
         mode = sd.get('book_search_mode')
+        ssc, ss = create_select(_('''Type of search:
+
+Contains: Search for the entered text anywhere
+
+Whole words: Search for whole words that equal the entered text
+
+Regex: Interpret the entered text as a regular expression'''),
+        mode, contains=_('Contains'), word=_('Whole words'), regex=_('Regex'))
+        ss.setAttribute('name', 'mode')
+        ss.addEventListener('change', def (ev):
+            get_session_data().set('book_search_mode', ev.target.value)
+        )
 
         c.appendChild(E.div(
             style='display: flex; padding: 1rem; padding-top: 0.5rem; padding-bottom: 0; align-items: center; overflow: hidden',
-            E.label(
-                _('Search type:') + '\xa0',
-                E.select(
-                    name='mode',
-                    title=_('''Type of search:
-
-                    Contains: Search for the entered text anywhere
-
-                    Whole words: Search for whole words that equal the entered text
-
-                    Regex: Interpret the entered text as a regular expression
-                    '''),
-                    E.option(_('Contains'), value='contains', selected=mode=='contains'),
-                    E.option(_('Whole words'), value='word', selected=mode=='word'),
-                    E.option(_('Regex'), value='regex', selected=mode=='regex'),
-                    onchange=def(event):
-                        get_session_data().set('book_search_mode', event.target.value)
-                ),
-            ),
+            E.label(_('Search type:') + '\xa0', ssc),
             E.div('\xa0\xa0'),
             E.label(E.input(
                 type='checkbox', name='case_sensitive', checked=bool(sd.get('book_search_case_sensitive'))),
-                onchange=def(event):
+                onchange=def (event):
                         get_session_data().set('book_search_case_sensitive', event.target.checked)
                 , _('Case sensitive'),
             ),
@@ -176,6 +185,43 @@ class SearchOverlay:
             self.clear_caches()
         return self._worker
 
+    def do_initial_search(self, text, query):
+        q = {'mode': 'contains', 'case_sensitive': True, 'text': text, 'only_first_match': True}
+        self.request_counter += 1
+        self.initial_search_result_counter = 0
+        self.initial_search_human_readable_query = query
+        self.search_in_flight.id = self.request_counter
+        self.result_handler = self.handle_initial_search_result
+        self.worker.postMessage({
+            'type': 'search', 'current_name': '', 'id': self.request_counter, 'query': q
+        })
+
+    def handle_initial_search_result(self, msg):
+        if msg.type is 'error':
+            emsg, details = parse_error_msg(msg)
+            self.view.hide_loading()
+            window.setTimeout(def ():
+                error_dialog(_('Could not search'), emsg, details)
+            , 1000)
+            self.result_handler = None
+            self.initial_search_result_counter = 0
+        elif msg.id is self.search_in_flight.id:
+            if msg.type is 'search_complete':
+                self.search_in_flight.id = None
+                self.result_handler = None
+                if self.initial_search_result_counter is 0:
+                    self.view.hide_loading()
+                    window.alert(
+                        _('The full text search query {} was not found in the book, try a manual search.')
+                        .format(self.initial_search_human_readable_query)
+                    )
+                self.initial_search_result_counter = 0
+            elif msg.type is 'search_result':
+                self.initial_search_result_counter += 1
+                if self.initial_search_result_counter is 1:
+                    self.view.discover_search_result(msg.result)
+                    self.view.hide_loading()
+
     def queue_search(self, query, book, current_name):
         self.request_counter += 1
         self.original_position = self.view.currently_showing.bookpos
@@ -197,18 +243,10 @@ class SearchOverlay:
 
     def on_worker_message(self, evt):
         msg = evt.data
+        if self.result_handler:
+            return self.result_handler(msg)
         if msg.type is 'error':
-            details = msg.msg
-            emsg = _('Unknown error')
-            if msg.code is GET_SPINE_FAILED:
-                emsg = _('Loading text from the book failed.')
-            elif msg.code is CONNECT_FAILED:
-                emsg = _('Connecting to database storing the local copy of the book failed in the worker thread.')
-            elif msg.code is UNHANDLED_ERROR:
-                emsg = _('There was an unhandled error while searching.')
-            elif msg.code is DB_ERROR:
-                emsg = msg.error.msg
-                details = msg.error.details
+            emsg, details = parse_error_msg(msg)
             error_dialog(_('Could not search'), emsg, details)
         elif msg.id is self.search_in_flight.id:
             if msg.type is 'search_complete':
@@ -241,7 +279,7 @@ class SearchOverlay:
                     E.span('+\xa0', style='display: none'),
                     E.span(toc_node?.title or _('Unknown')),
                     title=_('Click to show/hide the results in this chapter'),
-                    onclick=def(ev):
+                    onclick=def (ev):
                         ev.target.closest('[data-toc-node-id]').classList.toggle('collapsed')
                 ),
                 E.ul()
@@ -258,7 +296,7 @@ class SearchOverlay:
         ul = group.getElementsByTagName('ul')[0]
         tt = ''
         if result.toc_nodes.length:
-            lines = v'[]'
+            lines = []
             for i, node_id in enumerate(result.toc_nodes):
                 lines.push('\xa0\xa0' * i + '➤ ' + (self.toc_data.toc_id_map[node_id]?.title or _('Unknown')))
             tt = ngettext('Table of Contents section:', 'Table of Contents sections:', lines.length)
@@ -272,11 +310,6 @@ class SearchOverlay:
         if result.after:
             entry.appendChild(E.span(result.after + '…'))
         ul.appendChild(entry)
-
-    def make_query_programmatically(self, text, mode, case_sensitive):
-        self.current_query = {'text': text, 'mode': mode, 'case_sensitive': case_sensitive}
-        self.show()
-        self.run_search()
 
     @property
     def current_result_container(self):
@@ -389,7 +422,7 @@ class SearchOverlay:
             self.queue_search(q, current_book(), self.view.currently_showing.name)
 
 
-add_extra_css(def():
+add_extra_css(def ():
     css = ''
     sel = f'#{SearchOverlay.CONTAINER_ID} '
     sel += ' div[data-toc-node-id]'
@@ -398,8 +431,8 @@ add_extra_css(def():
     css += build_rule(sel + '.collapsed > ul', display='none')
     css += build_rule(sel + ' > div', font_style='italic', font_weight='bold', cursor='pointer')
     css += build_rule(sel + ' li', list_style_type='none', margin='1rem', margin_right='0', cursor='pointer')
-    css += build_rule(sel + ' li.current', border_left='solid 2px ' + get_color('link-foreground'), padding_left='2px')
-    css += build_rule(sel + ' li strong', color=get_color('link-foreground'), font_style='italic')
+    css += build_rule(sel + ' li.current', border_left='solid 2px var(--calibre-color-primary)', padding_left='2px')
+    css += build_rule(sel + ' li strong', color='var(--calibre-color-primary)', font_style='italic')
     return css
 )
 

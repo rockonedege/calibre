@@ -1,19 +1,12 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-store_version = 2  # Needed for dynamic plugin loading
-
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+store_version = 3  # Needed for dynamic plugin loading
 
 from contextlib import closing
-try:
-    from urllib.parse import urlencode
-except ImportError:
-    from urllib import urlencode
-
-from lxml import html
+from urllib.parse import urlencode
 
 from qt.core import QUrl
 
@@ -25,17 +18,25 @@ from calibre.gui2.store.basic_config import BasicStoreConfig
 from calibre.gui2.store.search_result import SearchResult
 from calibre.gui2.store.web_store_dialog import WebStoreDialog
 
+try:
+    from calibre.utils.xml_parse import safe_html_fromstring
+except ImportError:
+    from lxml.html import fromstring as safe_html_fromstring
+
 
 def search(query, max_results=10, timeout=60):
-    url = 'http://www.baen.com/catalogsearch/result/?' + urlencode(
-        {'q':query.lower(), 'dir':'desc', 'order':'relevance'})
+    url = 'http://www.baen.com/catalogsearch/result/?' + urlencode({
+        'q': query.lower(),
+        'dir': 'desc',
+        'order': 'relevance',
+    })
 
     br = browser()
 
     counter = max_results
     with closing(br.open_novisit(url, timeout=timeout)) as f:
         raw = f.read()
-        root = html.fromstring(raw)
+        root = safe_html_fromstring(raw)
         for data in root.xpath('//div[@id="productMatches"]//table[@id="authorTable"]//tr[contains(@class, "IDCell")]'):
             if counter <= 0:
                 break
@@ -76,8 +77,7 @@ def search(query, max_results=10, timeout=60):
 
 
 class BaenWebScriptionStore(BasicStoreConfig, StorePlugin):
-
-    def open(self, parent=None, detail_item=None, external=False):
+    def open(self, gui=None, parent=None, detail_item=None, external=False):
         url = 'http://www.baenebooks.com/'
         if external or self.config.get('open_external', False):
             open_url(QUrl(detail_item or url))
@@ -94,5 +94,6 @@ class BaenWebScriptionStore(BasicStoreConfig, StorePlugin):
 
 if __name__ == '__main__':
     import sys
+
     for result in search(' '.join(sys.argv[1:])):
         print(result)

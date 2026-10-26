@@ -1,36 +1,36 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import shutil, os, errno, stat
+import errno
+import os
+import shutil
+import stat
+from queue import Empty, LifoQueue
 from threading import Thread
 
-from qt.core import (QObject, pyqtSignal, QLabel, QWidget, QHBoxLayout, Qt, QSize)
+from qt.core import QHBoxLayout, QLabel, QObject, QSize, Qt, QWidget, pyqtSignal
 
 from calibre.constants import iswindows
-from calibre.ptempfile import PersistentTemporaryFile
 from calibre.gui2.progress_indicator import ProgressIndicator
+from calibre.ptempfile import PersistentTemporaryFile
 from calibre.utils import join_with_timeout
 from calibre.utils.filenames import atomic_rename, format_permissions
-from polyglot.queue import LifoQueue, Empty
+from calibre.utils.localization import _
 
 
 def save_dir_container(container, path):
     if not os.path.exists(path):
         os.makedirs(path)
     if not os.path.isdir(path):
-        raise ValueError('%s is not a folder, cannot save a directory based container to it' % path)
+        raise ValueError(f'{path} is not a folder, cannot save a directory based container to it')
     container.commit(path)
 
 
 def save_container(container, path):
     if container.is_dir:
         return save_dir_container(container, path)
-    temp = PersistentTemporaryFile(
-        prefix=('_' if iswindows else '.'), suffix=os.path.splitext(path)[1], dir=os.path.dirname(path))
-    if hasattr(os, 'fchmod'):
+    temp = PersistentTemporaryFile(prefix=('_' if iswindows else '.'), suffix=os.path.splitext(path)[1], dir=os.path.dirname(path))
+    if hasattr(os, 'fchown'):
         # Ensure file permissions and owner information is preserved
         fno = temp.fileno()
         st = None
@@ -53,8 +53,11 @@ def save_container(container, path):
             except OSError as err:
                 if err.errno != errno.EPERM:
                     raise
-                raise OSError('Failed to change permissions of {} to {} ({}), with error: {}. Most likely the {} directory has a restrictive umask'.format(
-                    temp.name, oct(st.st_mode), format_permissions(st.st_mode), errno.errorcode[err.errno], os.path.dirname(temp.name)))
+                err_code = errno.errorcode.get(err.errno, str(err.errno))
+                raise OSError(
+                    f'Failed to change permissions of {temp.name} to {oct(st.st_mode)} ({format_permissions(st.st_mode)}), '
+                    f'with error: {err_code}. Most likely the {os.path.dirname(temp.name)} directory has a restrictive umask'
+                )
             try:
                 os.fchown(fno, st.st_uid, st.st_gid)
             except OSError as err:
@@ -77,7 +80,8 @@ def save_container(container, path):
 def send_message(msg=''):
     if msg:
         from calibre.gui2.listener import send_message_in_process
-        send_message_in_process('bookedited:'+msg)
+
+        send_message_in_process('bookedited:' + msg)
 
 
 def find_first_existing_ancestor(path):
@@ -90,7 +94,6 @@ def find_first_existing_ancestor(path):
 
 
 class SaveWidget(QWidget):
-
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
         self.l = l = QHBoxLayout(self)
@@ -116,7 +119,6 @@ class SaveWidget(QWidget):
 
 
 class SaveManager(QObject):
-
     start_save = pyqtSignal()
     report_error = pyqtSignal(object)
     save_done = pyqtSignal()
@@ -154,8 +156,9 @@ class SaveManager(QObject):
             try:
                 count, tdir, container = x
                 error_occurred = self.process_save(count, tdir, container)
-            except:
+            except Exception:
                 import traceback
+
                 traceback.print_exc()
             finally:
                 self.requests.task_done()
@@ -166,13 +169,20 @@ class SaveManager(QObject):
         while True:
             if not self.notify_requests.get():
                 break
-            send_message(self.notify_data)
+            try:
+                send_message(self.notify_data)
+            except Exception:
+                # calibre may not be running, dont let that kill this thread
+                # as the user could start calibre again before the next save
+                import traceback
+
+                traceback.print_exc()
 
     def clear_notify_data(self):
         self.notify_data = None
 
     def __empty_queue(self):
-        ' Only to be used during shutdown '
+        "Only to be used during shutdown"
         while True:
             try:
                 self.requests.get_nowait()
@@ -190,8 +200,9 @@ class SaveManager(QObject):
         error_occurred = False
         try:
             self.do_save(tdir, container)
-        except:
+        except Exception:
             import traceback
+
             self.report_error.emit(traceback.format_exc())
             error_occurred = True
         self.save_done.emit()

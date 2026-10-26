@@ -18,53 +18,52 @@
 # Contributor(s):
 #
 
-
 import io
 import json
 import os
 import re
 
-from lxml.etree import fromstring, tostring
+from lxml.etree import tostring
+from odf.draw import Frame as odFrame
+from odf.draw import Image as odImage
+from odf.namespaces import DCNS, METANS, OFFICENS
+from odf.opendocument import load as odLoad
 
-from calibre.ebooks.metadata import (
-    MetaInformation, authors_to_string, check_isbn, string_to_authors
-)
+from calibre.ebooks.metadata import MetaInformation, authors_to_string, check_isbn, string_to_authors
 from calibre.utils.date import isoformat, parse_date
 from calibre.utils.imghdr import identify
 from calibre.utils.localization import canonicalize_lang, lang_as_iso639_1
+from calibre.utils.xml_parse import safe_xml_fromstring
 from calibre.utils.zipfile import ZipFile, safe_replace
-from odf.draw import Frame as odFrame, Image as odImage
-from odf.namespaces import DCNS, METANS, OFFICENS
-from odf.opendocument import load as odLoad
 from polyglot.builtins import as_unicode
 
 fields = {
-    'title':            (DCNS, 'title'),
-    'description':      (DCNS, 'description'),
-    'subject':          (DCNS, 'subject'),
-    'creator':          (DCNS, 'creator'),
-    'date':             (DCNS, 'date'),
-    'language':         (DCNS, 'language'),
-    'generator':        (METANS, 'generator'),
-    'initial-creator':  (METANS, 'initial-creator'),
-    'keyword':          (METANS, 'keyword'),
-    'keywords':         (METANS, 'keywords'),
+    'title': (DCNS, 'title'),
+    'description': (DCNS, 'description'),
+    'subject': (DCNS, 'subject'),
+    'creator': (DCNS, 'creator'),
+    'date': (DCNS, 'date'),
+    'language': (DCNS, 'language'),
+    'generator': (METANS, 'generator'),
+    'initial-creator': (METANS, 'initial-creator'),
+    'keyword': (METANS, 'keyword'),
+    'keywords': (METANS, 'keywords'),
     'editing-duration': (METANS, 'editing-duration'),
-    'editing-cycles':   (METANS, 'editing-cycles'),
-    'printed-by':       (METANS, 'printed-by'),
-    'print-date':       (METANS, 'print-date'),
-    'creation-date':    (METANS, 'creation-date'),
-    'user-defined':     (METANS, 'user-defined'),
+    'editing-cycles': (METANS, 'editing-cycles'),
+    'printed-by': (METANS, 'printed-by'),
+    'print-date': (METANS, 'print-date'),
+    'creation-date': (METANS, 'creation-date'),
+    'user-defined': (METANS, 'user-defined'),
     # 'template':         (METANS, 'template'),
 }
 
 
 def uniq(vals):
-    ''' Remove all duplicates from vals, while preserving order.  '''
+    """Remove all duplicates from vals, while preserving order."""
     vals = vals or ()
     seen = set()
     seen_add = seen.add
-    return list(x for x in vals if x not in seen and not seen_add(x))
+    return [x for x in vals if x not in seen and not seen_add(x)]  # ty: ignore[redundant-condition]
 
 
 def get_metadata(stream, extract_cover=True):
@@ -75,7 +74,7 @@ def get_metadata(stream, extract_cover=True):
 
     with ZipFile(stream) as zf:
         meta = zf.read('meta.xml')
-        root = fromstring(meta)
+        root = safe_xml_fromstring(meta)
 
         def find(field):
             ns, tag = fields[field]
@@ -108,8 +107,8 @@ def get_metadata(stream, extract_cover=True):
         mi.tags = uniq(keywords)
         data = {}
         for tag in root.xpath('//ns0:user-defined', namespaces={'ns0': fields['user-defined'][0]}):
-            name = (tag.get('{%s}name' % METANS) or '').lower()
-            vtype = tag.get('{%s}value-type' % METANS) or 'string'
+            name = (tag.get(f'{{{METANS}}}name') or '').lower()
+            vtype = tag.get(f'{{{METANS}}}value-type') or 'string'
             val = tag.text
             if name and val:
                 if vtype == 'boolean':
@@ -120,19 +119,19 @@ def get_metadata(stream, extract_cover=True):
         if data.get('opf.metadata'):
             # custom metadata contains OPF information
             opfmeta = True
-            if data.get('opf.titlesort', ''):
+            if data.get('opf.titlesort'):
                 mi.title_sort = data['opf.titlesort']
-            if data.get('opf.authors', ''):
+            if data.get('opf.authors'):
                 mi.authors = string_to_authors(data['opf.authors'])
-            if data.get('opf.authorsort', ''):
+            if data.get('opf.authorsort'):
                 mi.author_sort = data['opf.authorsort']
-            if data.get('opf.isbn', ''):
+            if data.get('opf.isbn'):
                 isbn = check_isbn(data['opf.isbn'])
                 if isbn is not None:
                     mi.isbn = isbn
-            if data.get('opf.publisher', ''):
+            if data.get('opf.publisher'):
                 mi.publisher = data['opf.publisher']
-            if data.get('opf.pubdate', ''):
+            if data.get('opf.pubdate'):
                 mi.pubdate = parse_date(data['opf.pubdate'], assume_utc=True)
             if data.get('opf.identifiers'):
                 try:
@@ -144,14 +143,14 @@ def get_metadata(stream, extract_cover=True):
                     mi.rating = max(0, min(float(data['opf.rating']), 10))
                 except Exception:
                     pass
-            if data.get('opf.series', ''):
+            if data.get('opf.series'):
                 mi.series = data['opf.series']
-                if data.get('opf.seriesindex', ''):
+                if data.get('opf.seriesindex'):
                     try:
                         mi.series_index = float(data['opf.seriesindex'])
                     except Exception:
                         mi.series_index = 1.0
-            if data.get('opf.language', ''):
+            if data.get('opf.language'):
                 cl = canonicalize_lang(data['opf.language'])
                 if cl:
                     mi.languages = [cl]
@@ -172,11 +171,11 @@ def set_metadata(stream, mi):
         # print(raw.decode('utf-8'))
 
     stream.seek(os.SEEK_SET)
-    safe_replace(stream, "meta.xml", io.BytesIO(raw))
+    safe_replace(stream, 'meta.xml', io.BytesIO(raw))
 
 
 def _set_metadata(raw, mi):
-    root = fromstring(raw)
+    root = safe_xml_fromstring(raw)
     namespaces = {'office': OFFICENS, 'meta': METANS, 'dc': DCNS}
     nsrmap = {v: k for k, v in namespaces.items()}
 
@@ -191,25 +190,25 @@ def _set_metadata(raw, mi):
                 x.getparent().remove(x)
 
     def add(tag, val=None):
-        ans = meta.makeelement('{%s}%s' % fields[tag])
+        ans = meta.makeelement('{{{}}}{}'.format(*fields[tag]))
         ans.text = val
         meta.append(ans)
         return ans
 
     def remove_user_metadata(*names):
         for x in xpath('//meta:user-defined'):
-            q = (x.get('{%s}name' % METANS) or '').lower()
+            q = (x.get(f'{{{METANS}}}name') or '').lower()
             if q in names:
                 x.getparent().remove(x)
 
     def add_um(name, val, vtype='string'):
         ans = add('user-defined', val)
-        ans.set('{%s}value-type' % METANS, vtype)
-        ans.set('{%s}name' % METANS, name)
+        ans.set(f'{{{METANS}}}value-type', vtype)
+        ans.set(f'{{{METANS}}}name', name)
 
     def add_user_metadata(name, val):
         if not hasattr(add_user_metadata, 'sentinel_added'):
-            add_user_metadata.sentinel_added = True
+            setattr(add_user_metadata, 'sentinel_added', True)
             remove_user_metadata('opf.metadata')
             add_um('opf.metadata', 'true', 'boolean')
         val_type = 'string'
@@ -261,7 +260,7 @@ def _set_metadata(raw, mi):
         add_user_metadata('opf.identifiers', as_unicode(json.dumps(mi.identifiers)))
     if not mi.is_null('rating'):
         remove_user_metadata('opf.rating')
-        add_user_metadata('opf.rating', '%.2g' % mi.rating)
+        add_user_metadata('opf.rating', f'{mi.rating:.2g}')
 
     return tostring(root, encoding='utf-8', pretty_print=True)
 
@@ -294,7 +293,7 @@ def read_cover(stream, zin, mi, opfmeta, extract_cover):
             cover_data = (fmt, raw)
             cover_frame = frm.getAttribute('name')  # could have upper case
             break
-        if cover_href is None and imgnum == 1 and 0.8 <= height/width <= 1.8 and height*width >= 12000:
+        if cover_href is None and imgnum == 1 and 0.8 <= height / width <= 1.8 and height * width >= 12000:
             # Pick the first image as the cover if it is of a suitable size
             cover_href = i_href
             cover_data = (fmt, raw)

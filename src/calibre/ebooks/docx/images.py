@@ -1,24 +1,20 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import os
 import re
+
 from lxml.html.builder import HR, IMG
 
 from calibre import sanitize_file_name
 from calibre.constants import iswindows
-from calibre.ebooks.docx.names import barename
+from calibre.ebooks.docx.names import SVG_BLIP_URI, barename
 from calibre.utils.filenames import ascii_filename
 from calibre.utils.img import image_to_data, resize_to_fit
 from calibre.utils.imghdr import what
-from polyglot.builtins import iteritems, itervalues
 
 
 class LinkedImageNotFound(ValueError):
-
     def __init__(self, fname):
         ValueError.__init__(self, fname)
         self.fname = fname
@@ -41,17 +37,17 @@ def get_image_properties(parent, XPath, get):
     for extent in XPath('./wp:extent')(parent):
         try:
             width = emu_to_pt(int(extent.get('cx')))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
         try:
             height = emu_to_pt(int(extent.get('cy')))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     ans = {}
     if width is not None:
-        ans['width'] = '%.3gpt' % width
+        ans['width'] = f'{width:.3g}pt'
     if height is not None:
-        ans['height'] = '%.3gpt' % height
+        ans['height'] = f'{height:.3g}pt'
 
     alt = None
     title = None
@@ -86,14 +82,14 @@ def get_image_properties(parent, XPath, get):
 
 def get_image_margins(elem):
     ans = {}
-    for w, css in iteritems({'L':'left', 'T':'top', 'R':'right', 'B':'bottom'}):
-        val = elem.get('dist%s' % w, None)
+    for w, css in {'L': 'left', 'T': 'top', 'R': 'right', 'B': 'bottom'}.items():
+        val = elem.get(f'dist{w}', None)
         if val is not None:
             try:
                 val = emu_to_pt(val)
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
-            ans['padding-%s' % css] = '%.3gpt' % val
+            ans[f'padding-{css}'] = f'{val:.3g}pt'
     return ans
 
 
@@ -105,7 +101,7 @@ def get_hpos(anchor, page_width, XPath, get, width_frac):
         if rp == 'rightMargin':
             return 1 + width_frac
         al = None
-        almap = {'left':0, 'center':0.5, 'right':1}
+        almap = {'left': 0, 'center': 0.5, 'right': 1}
         for align in XPath('./wp:align')(ph):
             al = almap.get(align.text)
             if al is not None:
@@ -115,22 +111,21 @@ def get_hpos(anchor, page_width, XPath, get, width_frac):
         for po in XPath('./wp:posOffset')(ph):
             try:
                 pos = emu_to_pt(int(po.text))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 continue
-            return pos/page_width + width_frac
+            return pos / page_width + width_frac
 
     for sp in XPath('./wp:simplePos')(anchor):
         try:
             x = emu_to_pt(sp.get('x', None))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
-        return x/page_width + width_frac
+        return x / page_width + width_frac
 
     return 0
 
 
 class Images:
-
     def __init__(self, namespace, log):
         self.namespace = namespace
         self.rid_map = {}
@@ -146,7 +141,7 @@ class Images:
 
     def read_image_data(self, fname, base=None):
         if fname.startswith('file://'):
-            src = fname[len('file://'):]
+            src = fname[len('file://') :]
             if iswindows and src and src[0] == '/':
                 src = src[1:]
             if not src or not os.path.exists(src):
@@ -162,8 +157,9 @@ class Images:
         ext = what(None, raw) or base.rpartition('.')[-1] or 'jpeg'
         if ext == 'emf':
             # For an example, see: https://bugs.launchpad.net/bugs/1224849
-            self.log('Found an EMF image: %s, trying to extract embedded raster image' % fname)
+            self.log(f'Found an EMF image: {fname}, trying to extract embedded raster image')
             from calibre.utils.wmf.emf import emf_unwrap
+
             try:
                 raw = emf_unwrap(raw)
             except Exception:
@@ -177,12 +173,12 @@ class Images:
         return raw, base
 
     def unique_name(self, base):
-        exists = frozenset(itervalues(self.used))
+        exists = frozenset(self.used.values())
         c = 1
         name = base
         while name in exists:
             n, e = base.rpartition('.')[0::2]
-            name = '%s-%d.%s' % (n, c, e)
+            name = f'{n}-{c}.{e}'
             c += 1
         return name
 
@@ -190,7 +186,7 @@ class Images:
         resized, img = resize_to_fit(raw, max_width, max_height)
         if resized:
             base, ext = os.path.splitext(base)
-            base = base + '-%dx%d%s' % (max_width, max_height, ext)
+            base = base + f'-{max_width}x{max_height}{ext}'
             raw = image_to_data(img, fmt=ext[1:])
         return raw, base, resized
 
@@ -222,7 +218,7 @@ class Images:
         name = None
         link = None
         for hl in XPath('descendant::a:hlinkClick[@r:id]')(parent):
-            link = {'id':get(hl, 'r:id')}
+            link = {'id': get(hl, 'r:id')}
             tgt = hl.get('tgtFrame', None)
             if tgt:
                 link['target'] = tgt
@@ -236,16 +232,19 @@ class Images:
                 name = image_filename(name)
             alt = pr.get('descr') or alt
             for a in XPath('descendant::a:blip[@r:embed or @r:link]')(pic):
-                rid = get(a, 'r:embed')
-                if not rid:
-                    rid = get(a, 'r:link')
+                rid = get(a, 'r:embed') or get(a, 'r:link')
+                for asvg in XPath(f'./a:extLst/a:ext[@uri="{SVG_BLIP_URI}"]/asvg:svgBlip[@r:embed or @r:link]')(a):
+                    svg_rid = get(asvg, 'r:embed') or get(asvg, 'r:link')
+                    if svg_rid and svg_rid in self.rid_map:
+                        rid = svg_rid
+                        break
                 if rid and rid in self.rid_map:
                     try:
                         src = self.generate_filename(rid, name)
                     except LinkedImageNotFound as err:
-                        self.log.warn('Linked image: %s not found, ignoring' % err.fname)
+                        self.log.warn(f'Linked image: {err.fname} not found, ignoring')
                         continue
-                    img = IMG(src='images/%s' % src)
+                    img = IMG(src=f'images/{src}')
                     img.set('alt', alt or 'Image')
                     if title:
                         img.set('title', title)
@@ -262,7 +261,7 @@ class Images:
                 ans = self.pic_to_img(pic, alt, inline, title)
                 if ans is not None:
                     if style:
-                        ans.set('style', '; '.join(f'{k}: {v}' for k, v in iteritems(style)))
+                        ans.set('style', '; '.join(f'{k}: {v}' for k, v in style.items()))
                     yield ans
 
         # Now process the floats
@@ -273,7 +272,7 @@ class Images:
                 ans = self.pic_to_img(pic, alt, anchor, title)
                 if ans is not None:
                     if style:
-                        ans.set('style', '; '.join(f'{k}: {v}' for k, v in iteritems(style)))
+                        ans.set('style', '; '.join(f'{k}: {v}' for k, v in style.items()))
                     yield ans
 
     def pict_to_html(self, pict, page):
@@ -285,17 +284,17 @@ class Images:
             hr = HR()
             try:
                 pct = float(get(pict[0], 'o:hrpct'))
-            except (ValueError, TypeError, AttributeError):
+            except ValueError, TypeError, AttributeError:
                 pass
             else:
                 if pct > 0:
-                    style['width'] = '%.3g%%' % pct
+                    style['width'] = f'{pct:.3g}%'
             align = get(pict[0], 'o:hralign', 'center')
             if align in {'left', 'right'}:
                 style['margin-left'] = '0' if align == 'left' else 'auto'
                 style['margin-right'] = 'auto' if align == 'left' else '0'
             if style:
-                hr.set('style', '; '.join((f'{k}:{v}' for k, v in iteritems(style))))
+                hr.set('style', '; '.join((f'{k}:{v}' for k, v in style.items())))
             yield hr
 
         for imagedata in XPath('descendant::v:imagedata[@r:id]')(pict):
@@ -304,10 +303,10 @@ class Images:
                 try:
                     src = self.generate_filename(rid)
                 except LinkedImageNotFound as err:
-                    self.log.warn('Linked image: %s not found, ignoring' % err.fname)
+                    self.log.warn(f'Linked image: {err.fname} not found, ignoring')
                     continue
                 style = get(imagedata.getparent(), 'style')
-                img = IMG(src='images/%s' % src)
+                img = IMG(src=f'images/{src}')
                 alt = get(imagedata, 'o:title')
                 img.set('alt', alt or 'Image')
                 if 'position:absolute' in style:
@@ -326,7 +325,7 @@ class Images:
             # Ignore margins
             page_width = page.width
 
-        hpos = get_hpos(anchor, page_width, XPath, get, width/(2*page_width))
+        hpos = get_hpos(anchor, page_width, XPath, get, width / (2 * page_width))
 
         wrap_elem = None
         dofloat = False

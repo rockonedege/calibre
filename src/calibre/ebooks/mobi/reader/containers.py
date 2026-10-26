@@ -1,10 +1,7 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2014, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
-
-from struct import unpack_from, error
+from struct import error, unpack_from
 
 from calibre.utils.imghdr import what
 
@@ -14,7 +11,6 @@ def find_imgtype(data):
 
 
 class Container:
-
     def __init__(self, data):
         self.is_image_container = False
         self.resource_index = 0
@@ -32,7 +28,7 @@ class Container:
                 if size < 0:
                     break
                 if idx == 539:
-                    self.is_image_container = data[pos:pos+size] == b'application/image'
+                    self.is_image_container = data[pos : pos + size] == b'application/image'
                     break
                 pos += size
 
@@ -44,5 +40,3 @@ class Container:
             if imgtype != 'unknown':
                 return data, imgtype
         return None, None
-
-

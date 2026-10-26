@@ -1,23 +1,41 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
-import os, regex, collections
+import collections
+import os
 
-from calibre.utils.config import prefs
+import regex
+
 from calibre.constants import filesystem_encoding
-from calibre.ebooks.metadata.opf2 import OPF
-from calibre import isbytestring
 from calibre.customize.ui import get_file_type_metadata, set_file_type_metadata
 from calibre.ebooks.metadata import MetaInformation, string_to_authors
+from calibre.ebooks.metadata.opf2 import OPF
+from calibre.utils.config import prefs
+from calibre.utils.localization import _
 
 # The priorities for loading metadata from different file types
 # Higher values should be used to update metadata from lower values
-METADATA_PRIORITIES = collections.defaultdict(lambda:0)
+METADATA_PRIORITIES = collections.defaultdict(int)
 for i, ext in enumerate((
-    'html', 'htm', 'xhtml', 'xhtm',
-    'rtf', 'fb2', 'pdf', 'prc', 'odt',
-    'epub', 'lit', 'lrx', 'lrf', 'mobi',
-    'azw', 'azw3', 'azw1', 'rb', 'imp', 'snb'
+    'html',
+    'htm',
+    'xhtml',
+    'xhtm',
+    'rtf',
+    'fb2',
+    'pdf',
+    'prc',
+    'odt',
+    'epub',
+    'lit',
+    'lrx',
+    'lrf',
+    'mobi',
+    'azw',
+    'azw3',
+    'azw1',
+    'rb',
+    'imp',
+    'snb',
 )):
     METADATA_PRIORITIES[ext] = i + 1
 
@@ -29,7 +47,7 @@ def path_to_ext(path):
 def metadata_from_formats(formats, force_read_metadata=False, pattern=None):
     try:
         return _metadata_from_formats(formats, force_read_metadata, pattern)
-    except:
+    except Exception:
         mi = metadata_from_filename(list(iter(formats))[0], pat=pattern)
         if not mi.authors:
             mi.authors = [_('Unknown')]
@@ -47,12 +65,15 @@ def _metadata_from_formats(formats, force_read_metadata=False, pattern=None):
             return mi2
 
     for path, ext in zip(formats, extensions):
-        with lopen(path, 'rb') as stream:
+        with open(path, 'rb') as stream:
             try:
-                newmi = get_metadata(stream, stream_type=ext,
-                                     use_libprs_metadata=True,
-                                     force_read_metadata=force_read_metadata,
-                                     pattern=pattern)
+                newmi = get_metadata(
+                    stream,
+                    stream_type=ext,
+                    use_libprs_metadata=True,
+                    force_read_metadata=force_read_metadata,
+                    pattern=pattern,
+                )
                 mi.smart_update(newmi)
             except Exception:
                 continue
@@ -67,21 +88,18 @@ def _metadata_from_formats(formats, force_read_metadata=False, pattern=None):
     return mi
 
 
-def get_metadata(stream, stream_type='lrf', use_libprs_metadata=False,
-                 force_read_metadata=False, pattern=None):
+def get_metadata(stream, stream_type='lrf', use_libprs_metadata=False, force_read_metadata=False, pattern=None):
     pos = 0
     if hasattr(stream, 'tell'):
         pos = stream.tell()
     try:
-        return _get_metadata(stream, stream_type, use_libprs_metadata,
-                             force_read_metadata, pattern)
+        return _get_metadata(stream, stream_type, use_libprs_metadata, force_read_metadata, pattern)
     finally:
         if hasattr(stream, 'seek'):
             stream.seek(pos)
 
 
-def _get_metadata(stream, stream_type, use_libprs_metadata,
-                  force_read_metadata=False, pattern=None):
+def _get_metadata(stream, stream_type, use_libprs_metadata, force_read_metadata=False, pattern=None):
     if stream_type:
         stream_type = stream_type.lower()
     if stream_type in ('html', 'html', 'xhtml', 'xhtm', 'xml'):
@@ -93,7 +111,7 @@ def _get_metadata(stream, stream_type, use_libprs_metadata,
 
     opf = None
     if hasattr(stream, 'name'):
-        c = os.path.splitext(stream.name)[0]+'.opf'
+        c = os.path.splitext(stream.name)[0] + '.opf'
         if os.access(c, os.R_OK):
             opf = opf_metadata(os.path.abspath(c))
 
@@ -102,8 +120,11 @@ def _get_metadata(stream, stream_type, use_libprs_metadata,
 
     name = os.path.basename(getattr(stream, 'name', ''))
     # The fallback pattern matches the default filename format produced by calibre
-    base = metadata_from_filename(name, pat=pattern, fallback_pat=regex.compile(
-            r'^(?P<title>.+) - (?P<author>[^-]+)$', flags=regex.UNICODE | regex.VERSION1 | regex.FULLCASE))
+    base = metadata_from_filename(
+        name,
+        pat=pattern,
+        fallback_pat=regex.compile(r'^(?P<title>.+) - (?P<author>[^-]+)$', flags=regex.UNICODE | regex.VERSION1 | regex.FULLCASE),
+    )
     if not base.authors:
         base.authors = [_('Unknown')]
     if not base.title:
@@ -125,7 +146,7 @@ def set_metadata(stream, mi, stream_type='lrf', report_error=None):
 
 
 def metadata_from_filename(name, pat=None, fallback_pat=None):
-    if isbytestring(name):
+    if isinstance(name, bytes):
         name = name.decode(filesystem_encoding, 'replace')
     name = name.rpartition('.')[0]
     mi = MetaInformation(None, None)
@@ -136,7 +157,7 @@ def metadata_from_filename(name, pat=None, fallback_pat=None):
             try:
                 pat = regex.compile(prefs.get('filename_pattern'), flags=regex.UNICODE | regex.VERSION0 | regex.FULLCASE)
             except Exception:
-                pat = regex.compile('(?P<title>.+) - (?P<author>[^_]+)', flags=regex.UNICODE | regex.VERSION0 | regex.FULLCASE)
+                pat = regex.compile(r'(?P<title>.+) - (?P<author>[^_]+)', flags=regex.UNICODE | regex.VERSION0 | regex.FULLCASE)
 
     name = name.replace('_', ' ')
     match = pat.search(name)
@@ -153,6 +174,7 @@ def metadata_from_filename(name, pat=None, fallback_pat=None):
             if aus:
                 mi.authors = aus
                 if prefs['swap_author_names'] and mi.authors:
+
                     def swap(a):
                         if ',' in a:
                             parts = a.split(',', 1)
@@ -163,8 +185,9 @@ def metadata_from_filename(name, pat=None, fallback_pat=None):
                             parts = parts[:-1]
                             parts.insert(0, t)
                         return ' '.join(parts)
+
                     mi.authors = [swap(x) for x in mi.authors]
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             pass
         try:
             mi.series = match.group('series')
@@ -173,29 +196,30 @@ def metadata_from_filename(name, pat=None, fallback_pat=None):
         try:
             si = match.group('series_index')
             mi.series_index = float(si)
-        except (IndexError, ValueError, TypeError):
+        except IndexError, ValueError, TypeError:
             pass
         try:
             si = match.group('isbn')
             mi.isbn = si
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             pass
         try:
             publisher = match.group('publisher')
             mi.publisher = publisher
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             pass
         try:
             pubdate = match.group('published')
             if pubdate:
                 from calibre.utils.date import parse_only_date
+
                 mi.pubdate = parse_only_date(pubdate)
-        except:
+        except Exception:
             pass
         try:
             comments = match.group('comments')
             mi.comments = comments
-        except (IndexError, ValueError):
+        except IndexError, ValueError:
             pass
 
     if mi.is_null('title'):
@@ -223,30 +247,32 @@ def opf_metadata(opfpath):
             return mi
     except Exception:
         import traceback
+
         traceback.print_exc()
-        pass
 
 
 def forked_read_metadata(original_path, tdir):
     from calibre.ebooks.metadata.opf2 import metadata_to_opf
     from calibre.ebooks.metadata.worker import run_import_plugins
+    from calibre.utils.filenames import make_long_path_useable
+
     path = run_import_plugins((original_path,), os.getpid(), tdir)[0]
     if path != original_path:
-        with lopen(os.path.join(tdir, 'file_changed_by_plugins'), 'w') as f:
+        with open(os.path.join(tdir, 'file_changed_by_plugins'), 'w') as f:
             f.write(os.path.abspath(path))
-    with lopen(path, 'rb') as f:
+    with open(make_long_path_useable(path), 'rb') as f:
         fmt = os.path.splitext(path)[1][1:].lower()
         f.seek(0, 2)
         sz = f.tell()
-        with lopen(os.path.join(tdir, 'size.txt'), 'wb') as s:
+        with open(os.path.join(tdir, 'size.txt'), 'wb') as s:
             s.write(str(sz).encode('ascii'))
         f.seek(0)
         mi = get_metadata(f, fmt)
     if mi.cover_data and mi.cover_data[1]:
-        with lopen(os.path.join(tdir, 'cover.jpg'), 'wb') as f:
+        with open(os.path.join(tdir, 'cover.jpg'), 'wb') as f:
             f.write(mi.cover_data[1])
         mi.cover_data = (None, None)
         mi.cover = 'cover.jpg'
     opf = metadata_to_opf(mi, default_lang='und')
-    with lopen(os.path.join(tdir, 'metadata.opf'), 'wb') as f:
+    with open(os.path.join(tdir, 'metadata.opf'), 'wb') as f:
         f.write(opf)

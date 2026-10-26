@@ -1,22 +1,23 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2014, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2014, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import atexit, os, sys
-from math import ceil
-from unicodedata import normalize
-from threading import Thread, Lock
-from operator import itemgetter
+import atexit
+import os
+import sys
 from collections import OrderedDict
 from itertools import islice
+from math import ceil
+from operator import itemgetter
+from queue import Queue
+from threading import Lock, Thread
+from unicodedata import normalize
 
-from calibre import detect_ncpus as cpu_count, as_unicode
+from calibre import as_unicode
+from calibre import detect_ncpus as cpu_count
 from calibre.constants import filesystem_encoding
-from calibre.utils.icu import primary_sort_key, primary_find, primary_collator
-from polyglot.builtins import iteritems, itervalues
-from polyglot.queue import Queue
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import primary_collator, primary_find, primary_sort_key
+from calibre.utils.icu import upper as icu_upper
 
 DEFAULT_LEVEL1 = '/'
 DEFAULT_LEVEL2 = '-_ 0123456789'
@@ -28,7 +29,6 @@ class PluginFailed(RuntimeError):
 
 
 class Worker(Thread):
-
     daemon = True
 
     def __init__(self, requests, results):
@@ -55,14 +55,14 @@ workers = []
 
 
 def split(tasks, pool_size):
-    '''
+    """
     Split a list into a list of sub lists, with the number of sub lists being
     no more than pool_size. Each sublist contains
     2-tuples of the form (i, x) where x is an element from the original list
     and i is the index of the element x in the original list.
-    '''
+    """
     ans, count = [], 0
-    delta = int(ceil(len(tasks) / pool_size))
+    delta = ceil(len(tasks) / pool_size)
     while tasks:
         section = [(count + i, task) for i, task in enumerate(tasks[:delta])]
         tasks = tasks[delta:]
@@ -79,29 +79,19 @@ def default_scorer(*args, **kwargs):
 
 
 class Matcher:
-
-    def __init__(
-        self,
-        items,
-        level1=DEFAULT_LEVEL1,
-        level2=DEFAULT_LEVEL2,
-        level3=DEFAULT_LEVEL3,
-        scorer=None
-    ):
+    def __init__(self, items, level1=DEFAULT_LEVEL1, level2=DEFAULT_LEVEL2, level3=DEFAULT_LEVEL3, scorer=None):
         with wlock:
             if not workers:
                 requests, results = Queue(), Queue()
                 w = [Worker(requests, results) for i in range(max(1, cpu_count()))]
                 [x.start() for x in w]
                 workers.extend(w)
-        items = map(lambda x: normalize('NFC', str(x)), filter(None, items))
+        items = (normalize('NFC', str(x)) for x in filter(None, items))
         self.items = items = tuple(items)
         tasks = split(items, len(workers))
         self.task_maps = [{j: i for j, (i, _) in enumerate(task)} for task in tasks]
         scorer = scorer or default_scorer
-        self.scorers = [
-            scorer(tuple(map(itemgetter(1), task_items))) for task_items in tasks
-        ]
+        self.scorers = [scorer(tuple(map(itemgetter(1), task_items))) for task_items in tasks]
         self.sort_keys = None
 
     def __call__(self, query, limit=None):
@@ -110,10 +100,7 @@ class Matcher:
             for i, scorer in enumerate(self.scorers):
                 workers[0].requests.put((i, scorer, query))
             if self.sort_keys is None:
-                self.sort_keys = {
-                    i: primary_sort_key(x)
-                    for i, x in enumerate(self.items)
-                }
+                self.sort_keys = {i: primary_sort_key(x) for i, x in enumerate(self.items)}
             num = len(self.task_maps)
             scores, positions = {}, {}
             error = None
@@ -131,10 +118,8 @@ class Matcher:
                     error = x
 
         if error is not None:
-            raise Exception('Failed to score items: %s' % error)
-        items = sorted(((-scores[i], item, positions[i])
-                        for i, item in enumerate(self.items)),
-                       key=itemgetter(0))
+            raise Exception(f'Failed to score items: {error}')
+        items = sorted(((-scores[i], item, positions[i]) for i, item in enumerate(self.items)), key=itemgetter(0))
         if limit is not None:
             del items[limit:]
         return OrderedDict(x[1:] for x in filter(itemgetter(0), items))
@@ -155,7 +140,6 @@ def get_items_from_dir(basedir, acceptq=lambda x: True):
 
 
 class FilesystemMatcher(Matcher):
-
     def __init__(self, basedir, *args, **kwargs):
         Matcher.__init__(self, get_items_from_dir(basedir), *args, **kwargs)
 
@@ -169,9 +153,7 @@ def calc_score_for_char(ctx, prev, current, distance):
 
     if prev in ctx.level1:
         factor = 0.9
-    elif prev in ctx.level2 or (
-        icu_lower(prev) == prev and icu_upper(current) == current
-    ):
+    elif prev in ctx.level2 or (icu_lower(prev) == prev and icu_upper(current) == current):
         factor = 0.8
     elif prev in ctx.level3:
         factor = 0.7
@@ -193,7 +175,7 @@ def process_item(ctx, haystack, needle):
         if mem is None:
             for i in range(nidx, len(needle)):
                 n = needle[i]
-                if (len(haystack) - hidx < len(needle) - i):
+                if len(haystack) - hidx < len(needle) - i:
                     score = 0
                     break
                 pos = primary_find(n, haystack[hidx:])[0]
@@ -203,9 +185,7 @@ def process_item(ctx, haystack, needle):
                 pos += hidx
 
                 distance = pos - last_idx
-                score_for_char = ctx.max_score_per_char if distance <= 1 else calc_score_for_char(
-                    ctx, haystack[pos - 1], haystack[pos], distance
-                )
+                score_for_char = ctx.max_score_per_char if distance <= 1 else calc_score_for_char(ctx, haystack[pos - 1], haystack[pos], distance)
                 hidx = pos + 1
                 push((hidx, i, last_idx, score, list(positions)))
                 last_idx = positions[i] = pos
@@ -221,16 +201,15 @@ def process_item(ctx, haystack, needle):
 
 class PyScorer:
     __slots__ = (
-        'level1', 'level2', 'level3', 'max_score_per_char', 'items', 'memory'
+        'items',
+        'level1',
+        'level2',
+        'level3',
+        'max_score_per_char',
+        'memory',
     )
 
-    def __init__(
-        self,
-        items,
-        level1=DEFAULT_LEVEL1,
-        level2=DEFAULT_LEVEL2,
-        level3=DEFAULT_LEVEL3
-    ):
+    def __init__(self, items, level1=DEFAULT_LEVEL1, level2=DEFAULT_LEVEL2, level3=DEFAULT_LEVEL3):
         self.level1, self.level2, self.level3 = level1, level2, level3
         self.max_score_per_char = 0
         self.items = items
@@ -246,20 +225,10 @@ class PyScorer:
 
 
 class CScorer:
-
-    def __init__(
-        self,
-        items,
-        level1=DEFAULT_LEVEL1,
-        level2=DEFAULT_LEVEL2,
-        level3=DEFAULT_LEVEL3
-    ):
+    def __init__(self, items, level1=DEFAULT_LEVEL1, level2=DEFAULT_LEVEL2, level3=DEFAULT_LEVEL3):
         from calibre_extensions.matcher import Matcher
-        self.m = Matcher(
-            items,
-            primary_collator().capsule,
-            str(level1), str(level2), str(level3)
-        )
+
+        self.m = Matcher(items, primary_collator().capsule, str(level1), str(level2), str(level3))
 
     def __call__(self, query):
         scores, positions = self.m.calculate_scores(query)
@@ -271,21 +240,24 @@ def test(return_tests=False):
     import unittest
 
     class Test(unittest.TestCase):
-
-        @unittest.skipIf(is_sanitized, 'Sanitizer enabled can\'t check for leaks')
+        @unittest.skipIf(is_sanitized, "Sanitizer enabled can't check for leaks")
         def test_mem_leaks(self):
             import gc
+
             from calibre.utils.mem import get_memory as memory
+
             m = Matcher(['a'], scorer=CScorer)
             m('a')
 
             def doit(c):
-                m = Matcher([
-                    c + 'im/one.gif',
-                    c + 'im/two.gif',
-                    c + 'text/one.html',
-                ],
-                            scorer=CScorer)
+                m = Matcher(
+                    [
+                        c + 'im/one.gif',
+                        c + 'im/two.gif',
+                        c + 'text/one.html',
+                    ],
+                    scorer=CScorer,
+                )
                 m('one')
 
             start = memory()
@@ -304,17 +276,14 @@ def test(return_tests=False):
         def test_non_bmp(self):
             raw = '_\U0001f431-'
             m = Matcher([raw], scorer=CScorer)
-            positions = next(itervalues(m(raw)))
-            self.assertEqual(
-                positions, (0, 1, 2)
-            )
+            positions = next(iter(m(raw).values()))
+            self.assertEqual(positions, (0, 1, 2))
 
     if return_tests:
         return unittest.TestLoader().loadTestsFromTestCase(Test)
 
     class TestRunner(unittest.main):
-
-        def createTests(self):
+        def createTests(self, from_discovery=False, Loader=None):
             tl = unittest.TestLoader()
             self.test = tl.loadTestsFromTestCase(Test)
 
@@ -335,11 +304,11 @@ def input_unicode(prompt):
 def main(basedir=None, query=None):
     from calibre import prints
     from calibre.utils.terminal import ColoredStream
+
     if basedir is None:
         try:
-            basedir = input_unicode('Enter directory to scan [%s]: ' % os.getcwd()
-                                ).strip() or os.getcwd()
-        except (EOFError, KeyboardInterrupt):
+            basedir = input_unicode(f'Enter directory to scan [{os.getcwd()}]: ').strip() or os.getcwd()
+        except EOFError, KeyboardInterrupt:
             return
     m = FilesystemMatcher(basedir)
     emph = ColoredStream(sys.stdout, fg='red', bold=True)
@@ -347,11 +316,11 @@ def main(basedir=None, query=None):
         if query is None:
             try:
                 query = input_unicode('Enter query: ')
-            except (EOFError, KeyboardInterrupt):
+            except EOFError, KeyboardInterrupt:
                 break
             if not query:
                 break
-        for path, positions in islice(iteritems(m(query)), 0, 10):
+        for path, positions in islice(m(query).items(), 0, 10):
             positions = list(positions)
             p = 0
             while positions:

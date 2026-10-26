@@ -1,30 +1,26 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
 import importlib
 import os
 import sys
 import weakref
-from qt.core import (
-    QApplication, QDialog, QDialogButtonBox, QScrollArea, QSize
-)
+
+from qt.core import QDialog, QDialogButtonBox, QScrollArea, QSize
 
 from calibre.customize import PluginInstallationType
 from calibre.customize.ui import catalog_plugins, config
 from calibre.gui2 import dynamic, info_dialog
 from calibre.gui2.dialogs.catalog_ui import Ui_Dialog
+from calibre.utils.localization import _
 
 
 class Catalog(QDialog, Ui_Dialog):
-
-    ''' Catalog Dialog builder'''
+    """Catalog Dialog builder"""
 
     def __init__(self, parent, dbspec, ids, db):
         import re
+
         from PyQt6.uic import compileUi
 
         from calibre import prints as info
@@ -37,8 +33,7 @@ class Catalog(QDialog, Ui_Dialog):
         self.count.setText(str(self.count.text()).format(len(ids)))
 
         # Display the last-used title
-        self.title.setText(dynamic.get('catalog_last_used_title',
-            _('My books')))
+        self.title.setText(dynamic.get('catalog_last_used_title', _('My books')))
 
         self.fmts, self.widgets = [], []
 
@@ -49,21 +44,21 @@ class Catalog(QDialog, Ui_Dialog):
             name = plugin.name.lower().replace(' ', '_')
             if getattr(plugin, 'installation_type', None) is PluginInstallationType.BUILTIN:
                 try:
-                    catalog_widget = importlib.import_module('calibre.gui2.catalog.'+name)
+                    catalog_widget = importlib.import_module('calibre.gui2.catalog.' + name)
                     pw = catalog_widget.PluginWidget()
                     pw.parent_ref = weakref.ref(self)
                     pw.initialize(name, db)
                     pw.ICON = 'forward.png'
                     self.widgets.append(pw)
-                    [self.fmts.append([file_type.upper(), pw.sync_enabled,pw]) for file_type in plugin.file_types]
+                    [self.fmts.append([file_type.upper(), pw.sync_enabled, pw]) for file_type in plugin.file_types]
                 except ImportError:
-                    info("ImportError initializing %s" % name)
+                    info(f'ImportError initializing {name}')
                     continue
             else:
                 # Load dynamic tab
-                form = os.path.join(plugin.resources_path,'%s.ui' % name)
-                klass = os.path.join(plugin.resources_path,'%s.py' % name)
-                compiled_form = os.path.join(plugin.resources_path,'%s_ui.py' % name)
+                form = os.path.join(plugin.resources_path, f'{name}.ui')
+                klass = os.path.join(plugin.resources_path, f'{name}.py')
+                compiled_form = os.path.join(plugin.resources_path, f'{name}_ui.py')
 
                 if os.path.exists(form) and os.path.exists(klass):
                     # info("Adding widget for user-installed Catalog plugin %s" % plugin.name)
@@ -76,8 +71,7 @@ class Catalog(QDialog, Ui_Dialog):
                         buf = PolyglotStringIO()
                         compileUi(form, buf)
                         dat = buf.getvalue()
-                        dat = re.compile(r'QtGui.QApplication.translate\(.+?,\s+"(.+?)(?<!\\)",.+?\)',
-                                         re.DOTALL).sub(r'_("\1")', dat)
+                        dat = re.compile(r'QtGui.QApplication.translate\(.+?,\s+"(.+?)(?<!\\)",.+?\)', re.DOTALL).sub(r'_("\1")', dat)
                         open(compiled_form, 'wb').write(dat.encode('utf-8'))
 
                     # Import the dynamic PluginWidget() from .py file provided in plugin.zip
@@ -88,15 +82,15 @@ class Catalog(QDialog, Ui_Dialog):
                         pw.initialize(name)
                         pw.ICON = 'forward.png'
                         self.widgets.append(pw)
-                        [self.fmts.append([file_type.upper(), pw.sync_enabled,pw]) for file_type in plugin.file_types]
+                        [self.fmts.append([file_type.upper(), pw.sync_enabled, pw]) for file_type in plugin.file_types]
                     except ImportError:
-                        info("ImportError with %s" % name)
+                        info(f'ImportError with {name}')
                         continue
                     finally:
                         sys.path.remove(plugin.resources_path)
 
                 else:
-                    info("No dynamic tab resources found for %s" % name)
+                    info(f'No dynamic tab resources found for {name}')
 
         self.widgets = sorted(self.widgets, key=lambda x: x.TITLE)
 
@@ -128,22 +122,26 @@ class Catalog(QDialog, Ui_Dialog):
         self.add_to_library.setChecked(dynamic.get('catalog_add_to_library', True))
 
         self.format.currentIndexChanged.connect(self.show_plugin_tab)
-        self.buttonBox.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply)
-        self.buttonBox.button(QDialogButtonBox.StandardButton.Help).clicked.connect(self.help)
+        apply_btn = self.buttonBox.button(QDialogButtonBox.StandardButton.Apply)
+        assert apply_btn is not None
+        apply_btn.clicked.connect(self.apply)
+        help_btn = self.buttonBox.button(QDialogButtonBox.StandardButton.Help)
+        assert help_btn is not None
+        help_btn.clicked.connect(self.help)
         self.show_plugin_tab(None)
 
-        geom = dynamic.get('catalog_window_geom', None)
-        if geom is not None:
-            QApplication.instance().safe_restore_geometry(self, bytes(geom))
-        else:
-            self.resize(self.sizeHint())
-        g = self.screen().availableSize()
+        self.restore_geometry(dynamic, 'catalog_window_geom')
+        screen = self.screen()
+        assert screen is not None
+        g = screen.availableSize()
         self.setMaximumWidth(g.width() - 50)
         self.setMaximumHeight(g.height() - 50)
 
     def sizeHint(self):
-        geom = self.screen().availableSize()
-        nh, nw = max(300, geom.height()-50), max(400, geom.width()-70)
+        screen = self.screen()
+        assert screen is not None
+        geom = screen.availableSize()
+        nh, nw = max(300, geom.height() - 50), max(400, geom.width() - 70)
         return QSize(nw, nh)
 
     @property
@@ -166,10 +164,12 @@ class Catalog(QDialog, Ui_Dialog):
                     s.setWidget(pw), s.setWidgetResizable(True)
                     self.tabs.addTab(s, pw.TITLE)
                 break
+        help_button = self.buttonBox.button(QDialogButtonBox.StandardButton.Help)
+        assert help_button is not None
         if hasattr(self.options_widget, 'show_help'):
-            self.buttonBox.button(QDialogButtonBox.StandardButton.Help).setVisible(True)
+            help_button.setVisible(True)
         else:
-            self.buttonBox.button(QDialogButtonBox.StandardButton.Help).setVisible(False)
+            help_button.setVisible(False)
 
     def format_changed(self, idx):
         cf = str(self.format.currentText())
@@ -180,12 +180,12 @@ class Catalog(QDialog, Ui_Dialog):
             self.sync.setChecked(False)
 
     def settings_changed(self):
-        '''
+        """
         When title/format change, invalidate Preset in E-book options tab
-        '''
+        """
         cf = str(self.format.currentText()).lower()
         if cf in ('azw3', 'epub', 'mobi') and hasattr(self.options_widget, 'settings_changed'):
-            self.options_widget.settings_changed("title/format")
+            self.options_widget.settings_changed('title/format')
 
     @property
     def fmt_options(self):
@@ -202,7 +202,7 @@ class Catalog(QDialog, Ui_Dialog):
         dynamic.set('catalog_last_used_title', self.catalog_title)
         self.catalog_sync = bool(self.sync.isChecked())
         dynamic.set('catalog_sync_to_device', self.catalog_sync)
-        dynamic.set('catalog_window_geom', bytearray(self.saveGeometry()))
+        self.save_geometry(dynamic, 'catalog_window_geom')
         dynamic.set('catalog_add_to_library', self.add_to_library.isChecked())
 
     def apply(self, *args):
@@ -216,7 +216,7 @@ class Catalog(QDialog, Ui_Dialog):
         return QDialog.accept(self)
 
     def help(self):
-        '''
+        """
         To add help functionality for a specific format:
         In gui2.catalog.catalog_<format>.py, add the following:
             from calibre.gui2 import open_url
@@ -228,16 +228,19 @@ class Catalog(QDialog, Ui_Dialog):
                 open_url(QUrl(url))
 
         Create the help file at resources/catalog/help_<format>.html
-        '''
-        if self.tabs.count() > 1 and hasattr(self.options_widget,'show_help'):
+        """
+        if self.tabs.count() > 1 and hasattr(self.options_widget, 'show_help'):
             try:
                 self.options_widget.show_help()
-            except:
-                info_dialog(self, _('No help available'),
+            except Exception:
+                info_dialog(
+                    self,
+                    _('No help available'),
                     _('No help available for this output format.'),
                     show_copy_button=False,
-                    show=True)
+                    show=True,
+                )
 
     def reject(self):
-        dynamic.set('catalog_window_geom', bytearray(self.saveGeometry()))
+        self.save_geometry(dynamic, 'catalog_window_geom')
         QDialog.reject(self)

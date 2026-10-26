@@ -1,21 +1,19 @@
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2008, Kovid Goyal <kovid at kovidgoyal.net>
 
 from functools import partial
 
-from qt.core import (
-    QDialog, QListWidgetItem, QModelIndex, QIcon, QLabel, QVBoxLayout, QSize,
-    QDialogButtonBox, QListWidget, QHBoxLayout, QPushButton, QMenu)
+from qt.core import QDialog, QDialogButtonBox, QHBoxLayout, QIcon, QLabel, QListWidget, QListWidgetItem, QMenu, QModelIndex, QPushButton, QSize, QVBoxLayout
 
 from calibre.gui2 import file_icon_provider
+from calibre.startup import connect_lambda
+from calibre.utils.localization import _
 
 
 class ChooseFormatDialog(QDialog):
-
     def __init__(self, window, msg, formats, show_open_with=False):
         QDialog.__init__(self, window)
         self.resize(507, 377)
-        self.setWindowIcon(QIcon.ic("mimetypes/unknown.png"))
+        self.setWindowIcon(QIcon.ic('mimetypes/unknown.png'))
         self.setWindowTitle(_('Choose format'))
         self.l = l = QVBoxLayout(self)
         self.msg = QLabel(msg)
@@ -35,14 +33,13 @@ class ChooseFormatDialog(QDialog):
             self.owb.setMenu(self.own)
             self.own.aboutToShow.connect(self.populate_open_with)
         self.buttonBox = bb = QDialogButtonBox(self)
-        bb.setStandardButtons(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        bb.setStandardButtons(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept), bb.rejected.connect(self.reject)
         h.addStretch(10), h.addWidget(self.buttonBox)
 
         formats = list(formats)
         for format in formats:
-            self.formats.addItem(QListWidgetItem(file_icon_provider().icon_from_ext(format.lower()),
-                                                 format.upper()))
+            self.formats.addItem(QListWidgetItem(file_icon_provider().icon_from_ext(format.lower()), format.upper()))
         self._formats = formats
         self.formats.setCurrentRow(0)
         self._format = self.open_with_format = None
@@ -51,7 +48,8 @@ class ChooseFormatDialog(QDialog):
             self.update_open_with_button()
 
     def populate_open_with(self):
-        from calibre.gui2.open_with import populate_menu, edit_programs
+        from calibre.gui2.open_with import edit_programs, populate_menu
+
         menu = self.own
         menu.clear()
         fmt = self._formats[self.formats.currentRow()]
@@ -77,6 +75,7 @@ class ChooseFormatDialog(QDialog):
 
     def choose_open_with(self):
         from calibre.gui2.open_with import choose_program
+
         fmt = self._formats[self.formats.currentRow()]
         entry = choose_program(fmt, self)
         if entry is not None:
@@ -86,8 +85,7 @@ class ChooseFormatDialog(QDialog):
         fmt = fmt.upper()
         if fmt not in self._formats:
             self._formats.append(fmt)
-            self.formats.addItem(QListWidgetItem(
-                file_icon_provider().icon_from_ext(fmt.lower()), fmt.upper()))
+            self.formats.addItem(QListWidgetItem(file_icon_provider().icon_from_ext(fmt.lower()), fmt.upper()))
 
     def activated_slot(self, *args):
         self.accept()
@@ -102,6 +100,7 @@ class ChooseFormatDialog(QDialog):
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
+
     app = Application([])
     d = ChooseFormatDialog(None, 'Testing choose format', ['epub', 'mobi', 'docx'], show_open_with=True)
     d.exec()

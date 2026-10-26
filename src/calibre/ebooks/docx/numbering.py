@@ -1,19 +1,16 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import re, string
+import re
+import string
 from collections import Counter, defaultdict
 from functools import partial
 
-from lxml.html.builder import OL, UL, SPAN
+from lxml.html.builder import OL, SPAN, UL
 
 from calibre.ebooks.docx.block_styles import ParagraphStyle
 from calibre.ebooks.docx.char_styles import RunStyle, inherit
 from calibre.ebooks.metadata import roman
-from polyglot.builtins import iteritems
 
 STYLE_MAP = {
     'aiueo': 'hiragana',
@@ -37,14 +34,15 @@ def alphabet(val, lower=True):
 
 
 alphabet_map = {
-    'lower-alpha':alphabet, 'upper-alpha':partial(alphabet, lower=False),
-    'lower-roman':lambda x:roman(x).lower(), 'upper-roman':roman,
-    'decimal-leading-zero': lambda x: '0%d' % x
+    'lower-alpha': alphabet,
+    'upper-alpha': partial(alphabet, lower=False),
+    'lower-roman': lambda x: roman(x).lower(),
+    'upper-roman': roman,
+    'decimal-leading-zero': lambda x: f'0{x}',
 }
 
 
 class Level:
-
     def __init__(self, namespace, lvl=None):
         self.namespace = namespace
         self.restart = None
@@ -62,7 +60,18 @@ class Level:
 
     def copy(self):
         ans = Level(self.namespace)
-        for x in ('restart', 'pic_id', 'start', 'fmt', 'para_link', 'paragraph_style', 'character_style', 'is_numbered', 'num_template', 'bullet_template'):
+        for x in (
+            'restart',
+            'pic_id',
+            'start',
+            'fmt',
+            'para_link',
+            'paragraph_style',
+            'character_style',
+            'is_numbered',
+            'num_template',
+            'bullet_template',
+        ):
             setattr(ans, x, getattr(self, x))
         return ans
 
@@ -72,8 +81,9 @@ class Level:
             if x > ilvl or x not in counter:
                 return ''
             val = counter[x] - (0 if x == ilvl else 1)
-            formatter = alphabet_map.get(self.fmt, lambda x: '%d' % x)
+            formatter = alphabet_map.get(self.fmt, lambda x: f'{x}')
             return formatter(val)
+
         return re.sub(r'%(\d+)', sub, template).rstrip() + '\xa0'
 
     def read_from_xml(self, lvl, override=False):
@@ -81,13 +91,13 @@ class Level:
         for lr in XPath('./w:lvlRestart[@w:val]')(lvl):
             try:
                 self.restart = int(get(lr, 'w:val'))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
 
         for lr in XPath('./w:start[@w:val]')(lvl):
             try:
                 self.start = int(get(lr, 'w:val'))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
 
         for rPr in XPath('./w:rPr')(lvl):
@@ -107,8 +117,9 @@ class Level:
                 self.is_numbered = False
                 cs = self.character_style
                 if lt in {'\uf0a7', 'o'} or (
-                    cs is not None and cs.font_family is not inherit and cs.font_family.lower() in {'wingdings', 'symbol'}):
-                    self.fmt = {'\uf0a7':'square', 'o':'circle'}.get(lt, 'disc')
+                    cs is not None and cs.font_family is not inherit and isinstance(cs.font_family, str) and cs.font_family.lower() in {'wingdings', 'symbol'}
+                ):
+                    self.fmt = {'\uf0a7': 'square', 'o': 'circle'}.get(lt, 'disc')
                 else:
                     self.bullet_template = lt
                 for lpid in XPath('./w:lvlPicBulletId[@w:val]')(lvl):
@@ -139,12 +150,15 @@ class Level:
                 except Exception:
                     fname = None
                 else:
-                    ans['list-style-image'] = 'url("images/%s")' % fname
+                    ans['list-style-image'] = f'url("images/{fname}")'
         return ans
 
     def char_css(self):
+        character_style = self.character_style
+        if character_style is None:
+            return {}
         try:
-            css = self.character_style.css
+            css = character_style.css
         except AttributeError:
             css = {}
         css.pop('font-family', None)
@@ -152,7 +166,6 @@ class Level:
 
 
 class NumberingDefinition:
-
     def __init__(self, namespace, parent=None, an_id=None):
         self.namespace = namespace
         XPath, get = self.namespace.XPath, self.namespace.get
@@ -162,19 +175,18 @@ class NumberingDefinition:
             for lvl in XPath('./w:lvl')(parent):
                 try:
                     ilvl = int(get(lvl, 'w:ilvl', 0))
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     ilvl = 0
                 self.levels[ilvl] = Level(namespace, lvl)
 
     def copy(self):
         ans = NumberingDefinition(self.namespace, an_id=self.abstract_numbering_definition_id)
-        for l, lvl in iteritems(self.levels):
+        for l, lvl in self.levels.items():
             ans.levels[l] = lvl.copy()
         return ans
 
 
 class Numbering:
-
     def __init__(self, namespace):
         self.namespace = namespace
         self.definitions = {}
@@ -184,7 +196,7 @@ class Numbering:
         self.pic_map = {}
 
     def __call__(self, root, styles, rid_map):
-        ' Read all numbering style definitions '
+        "Read all numbering style definitions"
         XPath, get = self.namespace.XPath, self.namespace.get
         self.rid_map = rid_map
         for npb in XPath('./w:numPicBullet[@w:numPicBulletId]')(root):
@@ -208,12 +220,12 @@ class Numbering:
             for lo in XPath('./w:lvlOverride')(n):
                 try:
                     ilvl = int(get(lo, 'w:ilvl'))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     ilvl = None
                 for so in XPath('./w:startOverride[@w:val]')(lo):
                     try:
                         start_override = int(get(so, 'w:val'))
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         pass
                     else:
                         start_overrides[ilvl] = start_override
@@ -224,7 +236,7 @@ class Numbering:
                     if alvl is None:
                         alvl = Level(self.namespace)
                     alvl.read_from_xml(lvl, override=True)
-            for ilvl, so in iteritems(start_overrides):
+            for ilvl, so in start_overrides.items():
                 try:
                     nd.levels[ilvl].start = start_override
                 except KeyError:
@@ -244,22 +256,22 @@ class Numbering:
             self.instances[num_id] = create_instance(n, d)
 
         numbering_links = styles.numbering_style_links
-        for an_id, style_link in iteritems(lazy_load):
+        for an_id, style_link in lazy_load.items():
             num_id = numbering_links[style_link]
             self.definitions[an_id] = self.instances[num_id].copy()
 
-        for num_id, (an_id, n) in iteritems(next_pass):
+        for num_id, (an_id, n) in next_pass.items():
             d = self.definitions.get(an_id, None)
             if d is not None:
                 self.instances[num_id] = create_instance(n, d)
 
-        for num_id, d in iteritems(self.instances):
-            self.starts[num_id] = {lvl:d.levels[lvl].start for lvl in d.levels}
+        for num_id, d in self.instances.items():
+            self.starts[num_id] = {lvl: d.levels[lvl].start for lvl in d.levels}
 
     def get_pstyle(self, num_id, style_id):
         d = self.instances.get(num_id, None)
         if d is not None:
-            for ilvl, lvl in iteritems(d.levels):
+            for ilvl, lvl in d.levels.items():
                 if lvl.para_link == style_id:
                     return ilvl
 
@@ -271,7 +283,7 @@ class Numbering:
 
     def update_counter(self, counter, levelnum, levels):
         counter[levelnum] += 1
-        for ilvl, lvl in iteritems(levels):
+        for ilvl, lvl in levels.items():
             restart = lvl.restart
             if (restart is None and ilvl == levelnum + 1) or restart == levelnum + 1:
                 counter[ilvl] = lvl.start
@@ -289,7 +301,7 @@ class Numbering:
                         counter[ilvl] = self.starts[num_id][ilvl]
                     seen_instances.add(num_id)
                     p.tag = 'li'
-                    p.set('value', '%s' % counter[ilvl])
+                    p.set('value', f'{counter[ilvl]}')
                     p.set('list-lvl', str(ilvl))
                     p.set('list-id', num_id)
                     if lvl.num_template is not None:
@@ -360,7 +372,7 @@ class Numbering:
                 if child.tag == 'li':
                     if current_run:
                         last = current_run[-1]
-                        if (last.get('list-id') , last.get('list-lvl')) != (child.get('list-id'), child.get('list-lvl')):
+                        if (last.get('list-id'), last.get('list-lvl')) != (child.get('list-id'), child.get('list-lvl')):
                             commit(current_run)
                     current_run.append(child)
                 else:
@@ -380,8 +392,7 @@ class Numbering:
                 obj = object_map[li]
                 bs = styles.para_cache[obj]
                 if i == 0:
-                    wrap.set('style', 'display:table; padding-left:%s' %
-                             bs.css.get('margin-left', '0'))
+                    wrap.set('style', 'display:table; padding-left:{}'.format(bs.css.get('margin-left', '0')))
                 bs.css.pop('margin-left', None)
                 for child in li:
                     child.set('style', 'display:table-cell')

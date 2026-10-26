@@ -1,84 +1,73 @@
-'''
+# License: GPLv3 Copyright: 2012, Kan-Ru Chen <kanru@kanru.info>
+
+"""
 Read content from Haodoo.net pdb file.
-'''
+"""
 
-__license__   = 'GPL v3'
-__copyright__ = '2012, Kan-Ru Chen <kanru@kanru.info>'
-__docformat__ = 'restructuredtext en'
-
-
-import struct
 import os
+import struct
 
 from calibre import prepare_string_for_xml
-from calibre.ebooks.pdb.formatreader import FormatReader
 from calibre.ebooks.metadata import MetaInformation
-from calibre.ebooks.txt.processor import opf_writer, HTML_TEMPLATE
+from calibre.ebooks.pdb.formatreader import FormatReader
+from calibre.ebooks.txt.processor import HTML_TEMPLATE, opf_writer
 
 BPDB_IDENT = 'BOOKMTIT'
 UPDB_IDENT = 'BOOKMTIU'
 
 punct_table = {
-    "︵": "（",
-    "︶": "）",
-    "︷": "｛",
-    "︸": "｝",
-    "︹": "〔",
-    "︺": "〕",
-    "︻": "【",
-    "︼": "】",
-    "︗": "〖",
-    "︘": "〗",
-    "﹇": "［］",
-    "﹈": "［］",
-    "︽": "《",
-    "︾": "》",
-    "︿": "〈",
-    "﹀": "〉",
-    "﹁": "「",
-    "﹂": "」",
-    "﹃": "『",
-    "﹄": "』",
-    "｜": "—",
-    "︙": "…",
-    "ⸯ": "～",
-    "│": "…",
-    "￤": "…",
-    "　": "  ",
-    }
+    '︵': '（',
+    '︶': '）',
+    '︷': '｛',
+    '︸': '｝',
+    '︹': '〔',
+    '︺': '〕',
+    '︻': '【',
+    '︼': '】',
+    '︗': '〖',
+    '︘': '〗',
+    '﹇': '［］',
+    '﹈': '［］',
+    '︽': '《',
+    '︾': '》',
+    '︿': '〈',
+    '﹀': '〉',
+    '﹁': '「',
+    '﹂': '」',
+    '﹃': '『',
+    '﹄': '』',
+    '｜': '—',
+    '︙': '…',
+    'ⸯ': '～',
+    '│': '…',
+    '￤': '…',
+    '　': '  ',
+}
 
 
 def fix_punct(line):
-    for (key, value) in punct_table.items():
+    for key, value in punct_table.items():
         line = line.replace(key, value)
     return line
 
 
 class LegacyHeaderRecord:
-
     def __init__(self, raw):
         fields = raw.lstrip().replace(b'\x1b\x1b\x1b', b'\x1b').split(b'\x1b')
         self.title = fix_punct(fields[0].decode('cp950', 'replace'))
         self.num_records = int(fields[1])
-        self.chapter_titles = list(map(
-            lambda x: fix_punct(x.decode('cp950', 'replace').rstrip('\x00')),
-            fields[2:]))
+        self.chapter_titles = [fix_punct(x.decode('cp950', 'replace').rstrip('\x00')) for x in fields[2:]]
 
 
 class UnicodeHeaderRecord:
-
     def __init__(self, raw):
-        fields = raw.lstrip().replace(b'\x1b\x00\x1b\x00\x1b\x00',
-                b'\x1b\x00').split(b'\x1b\x00')
+        fields = raw.lstrip().replace(b'\x1b\x00\x1b\x00\x1b\x00', b'\x1b\x00').split(b'\x1b\x00')
         self.title = fix_punct(fields[0].decode('utf_16_le', 'ignore'))
         self.num_records = int(fields[1])
-        self.chapter_titles = list(map(
-            lambda x: fix_punct(x.decode('utf_16_le', 'replace').rstrip('\x00')),
-            fields[2].split(b'\r\x00\n\x00')))
+        self.chapter_titles = [fix_punct(x.decode('utf_16_le', 'replace').rstrip('\x00')) for x in fields[2].split(b'\r\x00\n\x00')]
 
 
 class Reader(FormatReader):
-
     def __init__(self, header, stream, log, options):
         self.stream = stream
         self.log = log
@@ -105,8 +94,7 @@ class Reader(FormatReader):
             return 'Unknown'
 
     def get_metadata(self):
-        mi = MetaInformation(self.header_record.title,
-                             [self.author()])
+        mi = MetaInformation(self.header_record.title, [self.author()])
         mi.language = 'zh-tw'
 
         return mi
@@ -115,16 +103,15 @@ class Reader(FormatReader):
         return self.sections[number]
 
     def decompress_text(self, number):
-        return self.section_data(number).decode(self.encoding,
-                'replace').rstrip('\x00')
+        return self.section_data(number).decode(self.encoding, 'replace').rstrip('\x00')
 
     def extract_content(self, output_dir):
         txt = ''
 
         self.log.info('Decompressing text...')
         for i in range(1, self.header_record.num_records + 1):
-            self.log.debug('\tDecompressing text section %i' % i)
-            title = self.header_record.chapter_titles[i-1]
+            self.log.debug(f'\tDecompressing text section {i}')
+            title = self.header_record.chapter_titles[i - 1]
             lines = []
             title_added = False
             for line in self.decompress_text(i).splitlines():
@@ -135,7 +122,7 @@ class Reader(FormatReader):
                     title_added = True
                 else:
                     line = prepare_string_for_xml(line)
-                lines.append('<p>%s</p>' % line)
+                lines.append(f'<p>{line}</p>')
             if not title_added:
                 lines.insert(0, '<h1 class="chapter">' + title + '</h1>\n')
             txt += '\n'.join(lines)

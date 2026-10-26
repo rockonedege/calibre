@@ -13,18 +13,21 @@
 """
 Gets options for main part of script
 """
-import sys, os
-from calibre.ebooks.rtf2xml import options_trem, configure_txt
+
+import os
+import sys
+
+from calibre.ebooks.rtf2xml import configure_txt, options_trem
 
 
 class GetOptions:
-
-    def __init__(self,
-            system_arguments,
-            rtf_dir,
-            bug_handler,
-            configuration_file=None,
-            ):
+    def __init__(
+        self,
+        system_arguments,
+        rtf_dir,
+        bug_handler,
+        configuration_file=None,
+    ):
         self.__system_arguments = system_arguments
         self.__rtf_dir = rtf_dir
         self.__configuration_file = configuration_file
@@ -36,43 +39,42 @@ class GetOptions:
         """
         return_options = self.__get_config_options()
         options_dict = {
-                        'dir'               :       [1],
-                        'help'              :       [0, 'h'],
-                        'show-warnings'     :       [0],
-                        'caps'              :       [0,],
-                        'no-caps'           :       [0],
-                        'symbol'            :       [0],
-                        'no-symbol'         :       [0],
-                        'windings'          :       [0],
-                        'no-wingdings'      :       [0],
-                        'zapf'              :       [0],
-                        'no-zapf'           :       [0],
-                        'font'              :       [0],
-                        'no-font'           :       [0],
-                        'dtd'               :       [1],
-                        'no-dtd'            :       [0],
-                        'version'           :       [0],
-                        'output'            :       [1, 'o'],
-                        'no-namespace'      :       [0],
-                        'level'             :       [1],
-                        'indent'            :       [1],
-                        'no-lists'          :       [0],
-                        'lists'             :       [0],
-                        'group-styles'      :       [0],
-                        'no-group-styles'   :       [0],
-                        'group-borders'      :       [0],
-                        'no-group-borders'   :       [0],
-                        'headings-to-sections'  :   [0],
-                        'no-headings-to-sections'   :   [0],
-                        'empty-para'  :       [0],
-                        'no-empty-para' :      [0],
-                        'format'            :       [1, 'f'],
-                        'config'            :       [0],
-                }
-        options_obj = options_trem.ParseOptions(
-                        system_string=self.__system_arguments,
-                        options_dict=options_dict
-                    )
+            'dir': [1],
+            'help': [0, 'h'],
+            'show-warnings': [0],
+            'caps': [
+                0,
+            ],
+            'no-caps': [0],
+            'symbol': [0],
+            'no-symbol': [0],
+            'windings': [0],
+            'no-wingdings': [0],
+            'zapf': [0],
+            'no-zapf': [0],
+            'font': [0],
+            'no-font': [0],
+            'dtd': [1],
+            'no-dtd': [0],
+            'version': [0],
+            'output': [1, 'o'],
+            'no-namespace': [0],
+            'level': [1],
+            'indent': [1],
+            'no-lists': [0],
+            'lists': [0],
+            'group-styles': [0],
+            'no-group-styles': [0],
+            'group-borders': [0],
+            'no-group-borders': [0],
+            'headings-to-sections': [0],
+            'no-headings-to-sections': [0],
+            'empty-para': [0],
+            'no-empty-para': [0],
+            'format': [1, 'f'],
+            'config': [0],
+        }
+        options_obj = options_trem.ParseOptions(system_string=self.__system_arguments, options_dict=options_dict)
         options, arguments = options_obj.parse_options()
         if options == 0:
             return_options['valid'] = 0
@@ -105,11 +107,8 @@ class GetOptions:
             return_options['out-file'] = options['output']
         else:
             pass
-            """
-            sys.stderr.write(
-                'You must provide an output file with the \'o\' option\n')
-            return_options['valid'] = 0
-            """
+            # sys.stderr.write("You must provide an output file with the 'o' option\n")
+            # return_options['valid'] = 0
         if 'level' in the_keys:
             return_options['level'] = options['level']
         the_level = return_options.get('level')
@@ -127,8 +126,7 @@ class GetOptions:
         if 'format' in the_keys:
             format = options['format']
             if format not in acceptable:
-                sys.stderr.write('--format must take either \'sdoc\' or '
-                        '\'tei\'\n')
+                sys.stderr.write("--format must take either 'sdoc' or 'tei'\n")
                 return_options['valid'] = 0
                 return return_options
             else:
@@ -137,7 +135,7 @@ class GetOptions:
         # Was able to fix this
         # format = return_options.get('format')
         # if format != 'raw' and format != None:
-            # return_options['raw-dtd-path'] = ''
+        # return_options['raw-dtd-path'] = ''
         return_options['show-warnings'] = 0
         if 'show-warnings' in the_keys:
             return_options['show-warnings'] = 1
@@ -196,13 +194,11 @@ class GetOptions:
         elif 'no-empty-para' in the_keys:
             return_options['empty-paragraphs'] = 0
         if len(arguments) == 0:
-            sys.stderr.write(
-                'You must provide a file to convert.\n')
+            sys.stderr.write('You must provide a file to convert.\n')
             return_options['valid'] = 0
             return return_options
         elif len(arguments) > 1:
-            sys.stderr.write(
-                'You can only convert one file at a time.\n')
+            sys.stderr.write('You can only convert one file at a time.\n')
             return_options['valid'] = 0
         else:
             return_options['in-file'] = arguments[0]
@@ -218,19 +214,17 @@ class GetOptions:
                     'Sorry, but this file does not have an "rtf" extension, so \n'
                     'the script will not attempt to convert it.\n'
                     'If it is in fact an rtf file, use the "-o" option.\n'
-                        )
+                )
                 return_options['valid'] = 0
             else:
-                return_options['out-file'] = '%s.xml' % the_file_name
+                return_options['out-file'] = f'{the_file_name}.xml'
         if not smart_output and not return_options['out-file']:
-            """
-            sys.stderr.write(
-                'Please provide and file to output with the -o option.\n'
-                'Or set \'<smart-output value = "true"/>\'.\n'
-                'in the configuration file.\n'
-                )
-            return_options['valid'] = 0
-            """
+            # sys.stderr.write(
+            #     'Please provide and file to output with the -o option.\n'
+            #     'Or set \'<smart-output value = "true"/>\'.\n'
+            #     'in the configuration file.\n'
+            #     )
+            # return_options['valid'] = 0
             pass
         if 'indent' in the_keys:
             try:
@@ -240,34 +234,30 @@ class GetOptions:
                 sys.stderr.write('--indent must take an integer')
                 return_options['valid'] = 0
         # check for format and pyxml
-        """
-        the_format = return_options.get('format')
-        if the_format != 'raw':
-            no_pyxml = return_options.get('no-pyxml')
-            if no_pyxml:
-                sys.stderr.write('You want to convert your file to "%s".\n'
-                        'Sorry, but you must have pyxml installed\n'
-                        'in order to convert your document to anything but raw XML.\n'
-                        'Please do not use the --format option.\n\n'
-                        % the_format
-                    )
-                return_options['valid'] = 0
-            xslt_proc = return_options.get('xslt-processor')
-            if xslt_proc == None and not no_pyxml:
-                sys.stderr.write('You want to convert your file to "%s".\n'
-                        'Sorry, but you must have an xslt processor set up\n'
-                        'in order to conevert your document to anything but raw XML.\n'
-                        'Please use --format raw.\n\n'
-                        % the_format
-                        )
-                return_options['valid'] = 0
-        """
+        # the_format = return_options.get('format')
+        # if the_format != 'raw':
+        #     no_pyxml = return_options.get('no-pyxml')
+        #     if no_pyxml:
+        #         sys.stderr.write('You want to convert your file to "%s".\n'
+        #                 'Sorry, but you must have pyxml installed\n'
+        #                 'in order to convert your document to anything but raw XML.\n'
+        #                 'Please do not use the --format option.\n\n'
+        #                 % the_format
+        #             )
+        #         return_options['valid'] = 0
+        #     xslt_proc = return_options.get('xslt-processor')
+        #     if xslt_proc == None and not no_pyxml:
+        #         sys.stderr.write('You want to convert your file to "%s".\n'
+        #                 'Sorry, but you must have an xslt processor set up\n'
+        #                 'in order to conevert your document to anything but raw XML.\n'
+        #                 'Please use --format raw.\n\n'
+        #                 % the_format
+        #                 )
+        #         return_options['valid'] = 0
         return return_options
 
     def __get_config_options(self):
-        configure_obj = configure_txt.Configure(
-            bug_handler=self.__bug_handler,
-            configuration_file=self.__configuration_file)
+        configure_obj = configure_txt.Configure(bug_handler=self.__bug_handler, configuration_file=self.__configuration_file)
         options_dict = configure_obj.get_configuration(type='normal')
         if options_dict == 1:
             sys.exit(1)
@@ -309,23 +299,23 @@ class GetOptions:
         else:
             options_dict['empty-paragraphs'] = 1
         form_lists = options_dict.get('lists')
-        if form_lists == 'true' or form_lists == '1':
+        if form_lists in {'true', '1'}:
             options_dict['form-lists'] = 1
-        elif form_lists == 'false' or form_lists == '0':
+        elif form_lists in {'false', '0'}:
             options_dict['form-lists'] = 0
         else:
             options_dict['form-lists'] = 0
         group_styles = options_dict.get('group-styles')
-        if group_styles == 'true' or group_styles == '1':
+        if group_styles in {'true', '1'}:
             options_dict['group-styles'] = 1
-        elif group_styles == 'false' or group_styles == '0':
+        elif group_styles in {'false', '0'}:
             options_dict['group-styles'] = 0
         else:
             options_dict['group-styles'] = 0
         group_borders = options_dict.get('group-borders')
-        if group_borders == 'true' or group_borders == '1':
+        if group_borders in {'true', '1'}:
             options_dict['group-borders'] = 1
-        elif group_borders == 'false' or group_borders == '0':
+        elif group_borders in {'false', '0'}:
             options_dict['group-borders'] = 0
         else:
             options_dict['group-borders'] = 0

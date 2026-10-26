@@ -1,23 +1,35 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import sys
 
 from qt.core import (
-    QMainWindow, Qt, QApplication, pyqtSignal, QLabel, QIcon, QFormLayout, QSize,
-    QDialog, QSpinBox, QCheckBox, QDialogButtonBox, QToolButton, QMenu, QInputDialog)
+    QAction,
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QIcon,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QMenu,
+    QSize,
+    QSpinBox,
+    Qt,
+    QToolButton,
+    pyqtSignal,
+)
 
 from calibre.gui2 import error_dialog
-from calibre.gui2.tweak_book import actions, tprefs, editors
+from calibre.gui2.tweak_book import actions, editors, tprefs
 from calibre.gui2.tweak_book.editor.canvas import Canvas
-from polyglot.builtins import itervalues
+from calibre.startup import connect_lambda
+from calibre.utils.localization import _
 
 
 class ResizeDialog(QDialog):  # {{{
-
     def __init__(self, width, height, parent=None):
         QDialog.__init__(self, parent)
         self.l = l = QFormLayout(self)
@@ -75,12 +87,15 @@ class ResizeDialog(QDialog):  # {{{
     @height.setter
     def height(self, val):
         self._height.setValue(val)
+
+
 # }}}
 
 
 class Editor(QMainWindow):
-
     has_line_numbers = False
+    action_copy: QAction
+    action_paste: QAction
 
     modification_state_changed = pyqtSignal(object)
     undo_redo_state_changed = pyqtSignal(object, object)
@@ -126,11 +141,15 @@ class Editor(QMainWindow):
 
     @property
     def undo_available(self):
-        return self.canvas.undo_action.isEnabled()
+        undo_action = self.canvas.undo_action
+        assert undo_action is not None
+        return undo_action.isEnabled()
 
     @property
     def redo_available(self):
-        return self.canvas.redo_action.isEnabled()
+        redo_action = self.canvas.redo_action
+        assert redo_action is not None
+        return redo_action.isEnabled()
 
     @property
     def current_line(self):
@@ -163,9 +182,7 @@ class Editor(QMainWindow):
         self._is_modified = False  # The image_changed signal will have been triggered causing this editor to be incorrectly marked as modified
 
     def replace_data(self, raw, only_if_different=True):
-        # We ignore only_if_different as it is useless in our case, and
-        # there is no easy way to check two images for equality
-        self.data = raw
+        self.canvas.load_image(raw, only_if_different=only_if_different)
 
     def apply_settings(self, prefs=None, dictionaries_changed=False):
         pass
@@ -175,6 +192,7 @@ class Editor(QMainWindow):
 
     def save_state(self):
         for bar in self.bars:
+            assert bar is not None
             if bar.isFloating():
                 return
         tprefs['image-editor-state'] = bytearray(self.saveState())
@@ -188,18 +206,25 @@ class Editor(QMainWindow):
         self.canvas.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def undo(self):
-        self.canvas.undo_action.trigger()
+        undo_action = self.canvas.undo_action
+        assert undo_action is not None
+        undo_action.trigger()
 
     def redo(self):
-        self.canvas.redo_action.trigger()
+        redo_action = self.canvas.redo_action
+        assert redo_action is not None
+        redo_action.trigger()
 
     def copy(self):
         self.canvas.copy()
 
     def cut(self):
-        return error_dialog(self, _('Not allowed'), _(
-            'Cutting of images is not allowed. If you want to delete the image, use'
-            ' the files browser to do it.'), show=True)
+        return error_dialog(
+            self,
+            _('Not allowed'),
+            _('Cutting of images is not allowed. If you want to delete the image, use the files browser to do it.'),
+            show=True,
+        )
 
     def paste(self):
         self.canvas.paste()
@@ -220,6 +245,7 @@ class Editor(QMainWindow):
     @property
     def selected_text(self):
         return ''
+
     # }}}
 
     def image_changed(self, new_image):
@@ -231,6 +257,7 @@ class Editor(QMainWindow):
         self.modification_state_changed.emit(True)
         self.fmt_label.setText(' ' + (self.canvas.original_image_format or '').upper())
         im = self.canvas.current_image
+        assert im is not None
         self.size_label.setText('{} x {}{}'.format(im.width(), im.height(), ' px'))
 
     def break_cycles(self):
@@ -245,18 +272,20 @@ class Editor(QMainWindow):
         self.cursor_position_changed.disconnect()
         self.copy_available_state_changed.disconnect()
 
-    def contextMenuEvent(self, ev):
-        ev.ignore()
+    def contextMenuEvent(self, event):
+        event.ignore()
 
     def create_toolbars(self):
         self.action_bar = b = self.addToolBar(_('File actions tool bar'))
+        assert b is not None
         b.setObjectName('action_bar')  # Needed for saveState
         for x in ('undo', 'redo'):
-            b.addAction(getattr(self.canvas, '%s_action' % x))
+            b.addAction(getattr(self.canvas, f'{x}_action'))
         self.edit_bar = b = self.addToolBar(_('Edit actions tool bar'))
+        assert b is not None
         b.setObjectName('edit-actions-bar')
         for x in ('copy', 'paste'):
-            ac = actions['editor-%s' % x]
+            ac = actions[f'editor-{x}']
             setattr(self, 'action_' + x, b.addAction(ac.icon(), x, getattr(self, x)))
         self.update_clipboard_actions()
 
@@ -266,7 +295,10 @@ class Editor(QMainWindow):
         self.action_resize = ac = b.addAction(QIcon.ic('resize.png'), _('Resize image'), self.resize_image)
         b.addSeparator()
         self.action_filters = ac = b.addAction(QIcon.ic('filter.png'), _('Image filters'))
-        b.widgetForAction(ac).setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        assert ac is not None
+        wfa = b.widgetForAction(ac)
+        assert isinstance(wfa, QToolButton)
+        wfa.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.filters_menu = m = QMenu(self)
         ac.setMenu(m)
         m.addAction(_('Auto-trim image'), self.canvas.autotrim_image)
@@ -277,6 +309,7 @@ class Editor(QMainWindow):
         m.addAction(_('Make image look like an oil painting'), self.oilify_image)
 
         self.info_bar = b = self.addToolBar(_('Image information bar'))
+        assert b is not None
         b.setObjectName('image_info_bar')
         self.fmt_label = QLabel('')
         b.addWidget(self.fmt_label)
@@ -285,6 +318,7 @@ class Editor(QMainWindow):
         b.addWidget(self.size_label)
         self.bars = [self.action_bar, self.edit_bar, self.info_bar]
         for x in self.bars:
+            assert x is not None
             x.setFloatable(False)
             x.topLevelChanged.connect(self.toolbar_floated)
             x.setIconSize(QSize(tprefs['toolbar_icon_size'], tprefs['toolbar_icon_size']))
@@ -293,7 +327,7 @@ class Editor(QMainWindow):
     def toolbar_floated(self, floating):
         if not floating:
             self.save_state()
-            for ed in itervalues(editors):
+            for ed in editors.values():
                 if ed is not self:
                     ed.restore_state()
 
@@ -307,25 +341,44 @@ class Editor(QMainWindow):
 
     def resize_image(self):
         im = self.canvas.current_image
+        assert im is not None
         d = ResizeDialog(im.width(), im.height(), self)
         if d.exec() == QDialog.DialogCode.Accepted:
             self.canvas.resize_image(d.width, d.height)
 
     def sharpen_image(self):
-        val, ok = QInputDialog.getInt(self, _('Sharpen image'), _(
-            'The standard deviation for the Gaussian sharpen operation (higher means more sharpening)'), value=3, min=1, max=20)
+        val, ok = QInputDialog.getInt(
+            self,
+            _('Sharpen image'),
+            _('The standard deviation for the Gaussian sharpen operation (higher means more sharpening)'),
+            value=3,
+            min=1,
+            max=20,
+        )
         if ok:
             self.canvas.sharpen_image(sigma=val)
 
     def blur_image(self):
-        val, ok = QInputDialog.getInt(self, _('Blur image'), _(
-            'The standard deviation for the Gaussian blur operation (higher means more blurring)'), value=3, min=1, max=20)
+        val, ok = QInputDialog.getInt(
+            self,
+            _('Blur image'),
+            _('The standard deviation for the Gaussian blur operation (higher means more blurring)'),
+            value=3,
+            min=1,
+            max=20,
+        )
         if ok:
             self.canvas.blur_image(sigma=val)
 
     def oilify_image(self):
-        val, ok = QInputDialog.getDouble(self, _('Oilify image'), _(
-            'The strength of the operation (higher numbers have larger effects)'), value=4, min=0.1, max=20)
+        val, ok = QInputDialog.getDouble(
+            self,
+            _('Oilify image'),
+            _('The strength of the operation (higher numbers have larger effects)'),
+            value=4,
+            min=0.1,
+            max=20,
+        )
         if ok:
             self.canvas.oilify_image(radius=val)
 

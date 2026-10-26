@@ -1,9 +1,8 @@
-__license__   = 'GPL v3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
 
-'''
+"""
 Read meta information from extZ (TXTZ, HTMLZ...) files.
-'''
+"""
 
 import io
 import os
@@ -11,29 +10,41 @@ import os
 from calibre.ebooks.metadata import MetaInformation
 from calibre.ebooks.metadata.opf2 import OPF
 from calibre.ptempfile import PersistentTemporaryFile
+from calibre.utils.localization import _
 from calibre.utils.zipfile import ZipFile, safe_replace
 
 
 def get_metadata(stream, extract_cover=True):
-    '''
+    """
     Return metadata as a L{MetaInfo} object
-    '''
+    """
     mi = MetaInformation(_('Unknown'), [_('Unknown')])
     stream.seek(0)
     try:
         with ZipFile(stream) as zf:
             opf_name = get_first_opf_name(zf)
-            opf_stream = io.BytesIO(zf.read(opf_name))
-            opf = OPF(opf_stream)
+            with zf.open(opf_name) as opf_stream:
+                opf = OPF(opf_stream)
             mi = opf.to_book_metadata()
             if extract_cover:
-                cover_href = opf.raster_cover
+                cover_href = opf.raster_cover or opf.guide_raster_cover
                 if not cover_href:
                     for meta in opf.metadata.xpath('//*[local-name()="meta" and @name="cover"]'):
                         val = meta.get('content')
                         if val.rpartition('.')[2].lower() in {'jpeg', 'jpg', 'png'}:
                             cover_href = val
                             break
+                    else:
+                        for val in opf.guide_cover_path(opf.root):  # this is needed because the cover is not in the manifest
+                            if val.rpartition('.')[2].lower() in {'jpeg', 'jpg', 'png'}:
+                                cover_href = val
+                                break
+                        else:
+                            # txtz files use a special element for cover
+                            for cpath in opf.root.xpath('//cover-relpath-from-base'):
+                                if cpath.text:
+                                    cover_href = cpath.text
+                                    break
                 if cover_href:
                     try:
                         mi.cover_data = (os.path.splitext(cover_href)[1], zf.read(cover_href))
@@ -59,11 +70,11 @@ def set_metadata(stream, mi):
         new_cdata = mi.cover_data[1]
         if not new_cdata:
             raise Exception('no cover')
-    except:
+    except Exception:
         try:
             with open(mi.cover, 'rb') as f:
                 new_cdata = f.read()
-        except:
+        except Exception:
             pass
     if new_cdata:
         cpath = opf.raster_cover
@@ -83,7 +94,7 @@ def set_metadata(stream, mi):
         if cpath is not None:
             replacements[cpath].close()
             os.remove(replacements[cpath].name)
-    except:
+    except Exception:
         pass
 
 
@@ -101,6 +112,7 @@ def get_first_opf_name(zf):
 
 def _write_new_cover(new_cdata, cpath):
     from calibre.utils.img import save_cover_data_to
+
     new_cover = PersistentTemporaryFile(suffix=os.path.splitext(cpath)[1])
     new_cover.close()
     save_cover_data_to(new_cdata, new_cover.name)

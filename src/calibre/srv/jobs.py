@@ -1,34 +1,53 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-import os, time
-from itertools import count
-from collections import namedtuple, deque
+import os
+import time
+from collections import deque
+from collections.abc import Callable
 from functools import partial
-from threading import RLock, Thread, Event
+from itertools import count
+from queue import Empty, Queue
+from threading import Event, RLock, Thread
+from typing import Any, NamedTuple
 
 from calibre import detect_ncpus, force_unicode
+from calibre.utils.ipc.simple_worker import WorkerError, fork_job
 from calibre.utils.monotonic import monotonic
-from calibre.utils.ipc.simple_worker import fork_job, WorkerError
-from polyglot.queue import Queue, Empty
-from polyglot.builtins import iteritems, itervalues
 
-StartEvent = namedtuple('StartEvent', 'job_id name module function args kwargs callback data')
-DoneEvent = namedtuple('DoneEvent', 'job_id')
+
+class StartEvent(NamedTuple):
+    job_id: int
+    name: str
+    module: str
+    function: str
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
+    callback: Callable[[], None] | None
+    data: Any | None
+
+
+class DoneEvent(NamedTuple):
+    job_id: int
 
 
 class Job(Thread):
-
     daemon = True
 
     def __init__(self, start_event, events_queue):
-        Thread.__init__(self, name='JobsMonitor%s' % start_event.job_id)
+        Thread.__init__(self, name=f'JobsMonitor{start_event.job_id}')
         self.abort_event = Event()
         self.events_queue = events_queue
         self.job_name = start_event.name
         self.job_id = start_event.job_id
-        self.func = partial(fork_job, start_event.module, start_event.function, start_event.args, start_event.kwargs, abort=self.abort_event)
+        self.func = partial(
+            fork_job,
+            start_event.module,
+            start_event.function,
+            start_event.args,
+            start_event.kwargs,
+            abort=self.abort_event,
+        )
         self.data, self.callback = start_event.data, start_event.callback
         self.result = self.traceback = None
         self.done = False
@@ -39,10 +58,12 @@ class Job(Thread):
 
     def run(self):
         func, self.func = self.func, None
+        assert func is not None
         try:
             result = func()
         except WorkerError as err:
             import traceback
+
             self.traceback = err.orig_tb or traceback.format_exc()
             self.log_path = getattr(err, 'log_path', None)
         else:
@@ -72,7 +93,7 @@ class Job(Thread):
         ans = ''
         if self.log_path is not None:
             try:
-                with lopen(self.log_path, 'rb') as f:
+                with open(self.log_path, 'rb') as f:
                     ans = f.read()
             except OSError:
                 pass
@@ -82,7 +103,6 @@ class Job(Thread):
 
 
 class JobsManager:
-
     def __init__(self, opts, log):
         mj = opts.max_jobs
         if mj < 1:
@@ -144,12 +164,12 @@ class JobsManager:
     def shutdown(self, timeout=5.0):
         with self.lock:
             self.shutting_down = True
-            for job in itervalues(self.jobs):
+            for job in self.jobs.values():
                 job.abort_event.set()
             self.events.put(False)
 
     def wait_for_shutdown(self, wait_till):
-        for job in itervalues(self.jobs):
+        for job in self.jobs.values():
             delta = wait_till - monotonic()
             if delta > 0:
                 job.join(delta)
@@ -193,7 +213,7 @@ class JobsManager:
         with self.lock:
             mb = None
             now = monotonic()
-            for job in itervalues(self.jobs):
+            for job in self.jobs.values():
                 if not job.done and not job.abort_event.is_set():
                     delta = self.max_job_time - (now - job.start_time)
                     if delta <= 0:
@@ -208,7 +228,7 @@ class JobsManager:
     def abort_hanging_jobs(self):
         now = monotonic()
         found = False
-        for job in itervalues(self.jobs):
+        for job in self.jobs.values():
             if not job.done and not job.abort_event.is_set():
                 delta = self.max_job_time - (now - job.start_time)
                 if delta <= 0:
@@ -225,6 +245,7 @@ class JobsManager:
                     job.callback(job)
                 except Exception:
                     import traceback
+
                     self.log.error(f'Error running callback for job: {job.name}:\n{traceback.format_exc()}')
         self.prune_finished_jobs()
         if job.traceback and not job.was_aborted:
@@ -237,11 +258,12 @@ class JobsManager:
         with self.lock:
             remove = []
             now = monotonic()
-            for job_id, job in iteritems(self.finished_jobs):
+            for job_id, job in self.finished_jobs.items():
                 if now - job.end_time > 3600:
                     remove.append(job_id)
             for job_id in remove:
                 del self.finished_jobs[job_id]
+
     # }}}
 
 

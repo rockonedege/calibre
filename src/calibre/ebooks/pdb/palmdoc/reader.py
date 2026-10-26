@@ -1,32 +1,29 @@
-'''
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
+
+"""
 Read content from palmdoc pdb file.
-'''
+"""
 
-__license__   = 'GPL v3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
-
-import struct, io
-
+import io
+import struct
 
 from calibre.ebooks.pdb.formatreader import FormatReader
 
 
 class HeaderRecord:
-    '''
+    """
     The first record in the file is always the header record. It holds
     information related to the location of text, images, and so on
     in the file. This is used in conjunction with the sections
     defined in the file header.
-    '''
+    """
 
     def __init__(self, raw):
-        self.compression, = struct.unpack('>H', raw[0:2])
-        self.num_records, = struct.unpack('>H', raw[8:10])
+        (self.compression,) = struct.unpack('>H', raw[0:2])
+        (self.num_records,) = struct.unpack('>H', raw[8:10])
 
 
 class Reader(FormatReader):
-
     def __init__(self, header, stream, log, options):
         self.stream = stream
         self.log = log
@@ -44,8 +41,9 @@ class Reader(FormatReader):
     def decompress_text(self, number):
         if self.header_record.compression == 1:
             return self.section_data(number)
-        if self.header_record.compression == 2 or self.header_record.compression == 258:
+        if self.header_record.compression in {2, 258}:
             from calibre.ebooks.compression.palmdoc import decompress_doc
+
             return decompress_doc(self.section_data(number))
         return b''
 
@@ -54,7 +52,7 @@ class Reader(FormatReader):
 
         self.log.info('Decompressing text...')
         for i in range(1, self.header_record.num_records + 1):
-            self.log.debug('\tDecompressing text section %i' % i)
+            self.log.debug(f'\tDecompressing text section {i}')
             raw_txt += self.decompress_text(i)
 
         self.log.info('Converting text to OEB...')

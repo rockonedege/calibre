@@ -1,6 +1,4 @@
-__license__   = 'GPL v3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
 import glob
 import os
@@ -8,15 +6,15 @@ import shutil
 
 from calibre.customize.conversion import InputFormatPlugin
 from calibre.ptempfile import TemporaryDirectory
+from calibre.utils.localization import _
 
 
 class PMLInput(InputFormatPlugin):
-
-    name        = 'PML Input'
-    author      = 'John Schember'
+    name = 'PML Input'
+    author = 'John Schember'
     description = _('Convert PML to OEB')
     # pmlz is a zip file containing pml files and png images.
-    file_types  = {'pml', 'pmlz'}
+    file_types = {'pml', 'pmlz'}
     commit_name = 'pml_input'
 
     def process_pml(self, pml_path, html_path, close_all=False):
@@ -26,14 +24,14 @@ class PMLInput(InputFormatPlugin):
         hclose = False
 
         if not hasattr(pml_path, 'read'):
-            pml_stream = lopen(pml_path, 'rb')
+            pml_stream = open(pml_path, 'rb')
             pclose = True
         else:
             pml_stream = pml_path
             pml_stream.seek(0)
 
         if not hasattr(html_path, 'write'):
-            html_stream = lopen(html_path, 'wb')
+            html_stream = open(html_path, 'wb')
             hclose = True
         else:
             html_stream = html_path
@@ -41,13 +39,14 @@ class PMLInput(InputFormatPlugin):
         ienc = getattr(pml_stream, 'encoding', None)
         if ienc is None:
             ienc = 'cp1252'
-        if self.options.input_encoding:
-            ienc = self.options.input_encoding
+        enc_opt = getattr(self.options, 'input_encoding', None)
+        if enc_opt:
+            ienc = enc_opt
 
         self.log.debug('Converting PML to HTML...')
         hizer = PML_HTMLizer()
         html = hizer.parse_pml(pml_stream.read().decode(ienc), html_path)
-        html = '<html><head><title></title></head><body>%s</body></html>'%html
+        html = f'<html><head><title></title></head><body>{html}</body></html>'
         html_stream.write(html.encode('utf-8', 'replace'))
 
         if pclose:
@@ -57,19 +56,20 @@ class PMLInput(InputFormatPlugin):
 
         return hizer.get_toc()
 
-    def get_images(self, stream, tdir, top_level=False):
+    def get_images(self, stream=None, tdir: str | None = None, top_level=False):
         images = []
         imgs = []
 
         if top_level:
+            assert tdir is not None
             imgs = glob.glob(os.path.join(tdir, '*.png'))
         # Images not in top level try bookname_img directory because
         # that's where Dropbook likes to see them.
         if not imgs:
-            if hasattr(stream, 'name'):
+            if hasattr(stream, 'name') and tdir is not None:
                 imgs = glob.glob(os.path.join(tdir, os.path.splitext(os.path.basename(stream.name))[0] + '_img', '*.png'))
         # No images in Dropbook location try generic images directory
-        if not imgs:
+        if not imgs and tdir is not None:
             imgs = glob.glob(os.path.join(os.path.join(tdir, 'images'), '*.png'))
         if imgs:
             os.makedirs(os.path.join(os.getcwd(), 'images'))
@@ -83,10 +83,9 @@ class PMLInput(InputFormatPlugin):
 
         return images
 
-    def convert(self, stream, options, file_ext, log,
-                accelerators):
-        from calibre.ebooks.metadata.toc import TOC
+    def convert(self, stream, options, file_ext, log, accelerators):
         from calibre.ebooks.metadata.opf2 import OPFCreator
+        from calibre.ebooks.metadata.toc import TOC
         from calibre.utils.zipfile import ZipFile
 
         self.options = options
@@ -102,11 +101,11 @@ class PMLInput(InputFormatPlugin):
 
                 pmls = glob.glob(os.path.join(tdir, '*.pml'))
                 for pml in pmls:
-                    html_name = os.path.splitext(os.path.basename(pml))[0]+'.html'
+                    html_name = os.path.splitext(os.path.basename(pml))[0] + '.html'
                     html_path = os.path.join(os.getcwd(), html_name)
 
                     pages.append(html_name)
-                    log.debug('Processing PML item %s...' % pml)
+                    log.debug(f'Processing PML item {pml}...')
                     ttoc = self.process_pml(pml, html_path)
                     toc += ttoc
                 images = self.get_images(stream, tdir, True)
@@ -121,10 +120,11 @@ class PMLInput(InputFormatPlugin):
         pages.sort()
 
         manifest_items = []
-        for item in pages+images:
+        for item in pages + images:
             manifest_items.append((item, None))
 
         from calibre.ebooks.metadata.meta import get_metadata
+
         log.debug('Reading metadata from input file...')
         mi = get_metadata(stream, 'pml')
         if 'images/cover.png' in images:
@@ -134,14 +134,15 @@ class PMLInput(InputFormatPlugin):
         opf.create_manifest(manifest_items)
         opf.create_spine(pages)
         opf.set_toc(toc)
-        with lopen('metadata.opf', 'wb') as opffile:
-            with lopen('toc.ncx', 'wb') as tocfile:
+        with open('metadata.opf', 'wb') as opffile:
+            with open('toc.ncx', 'wb') as tocfile:
                 opf.render(opffile, tocfile, 'toc.ncx')
 
         return os.path.join(os.getcwd(), 'metadata.opf')
 
     def postprocess_book(self, oeb, opts, log):
         from calibre.ebooks.oeb.base import XHTML, barename
+
         for item in oeb.spine:
             if hasattr(item.data, 'xpath'):
                 for heading in item.data.iterdescendants(*map(XHTML, 'h1 h2 h3 h4 h5 h6'.split())):

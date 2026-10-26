@@ -1,16 +1,14 @@
-__license__ = 'GPL 3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
-'''
+"""
 Transform OEB content into RB compatible markup.
-'''
+"""
 
 import re
 
 from calibre import prepare_string_for_xml
 from calibre.ebooks.rb import unique_name
-from polyglot.builtins import string_or_bytes
+from calibre.utils.localization import _
 
 TAGS = [
     'b',
@@ -47,15 +45,16 @@ IMAGE_TAGS = [
 ]
 
 STYLES = [
-    ('font-weight', {'bold'   : 'b', 'bolder' : 'b'}),
-    ('font-style', {'italic' : 'i'}),
-    ('text-align', {'center' : 'center'}),
+    ('font-weight', {'bold': 'b', 'bolder': 'b'}),
+    ('font-style', {'italic': 'i'}),
+    ('text-align', {'center': 'center'}),
 ]
 
 
 class RBMLizer:
-
-    def __init__(self, log, name_map={}):
+    def __init__(self, log, name_map=None):
+        if name_map is None:
+            name_map = {}
         self.log = log
         self.name_map = name_map
         self.link_hrefs = {}
@@ -78,19 +77,19 @@ class RBMLizer:
         return output
 
     def get_cover_page(self):
-        from calibre.ebooks.oeb.stylizer import Stylizer
         from calibre.ebooks.oeb.base import XHTML
+        from calibre.ebooks.oeb.stylizer import Stylizer
+
         output = ''
         if 'cover' in self.oeb_book.guide:
             if self.name_map.get(self.oeb_book.guide['cover'].href, None):
-                output += '<IMG SRC="%s">' % self.name_map[self.oeb_book.guide['cover'].href]
+                output += '<IMG SRC="{}">'.format(self.name_map[self.oeb_book.guide['cover'].href])
         if 'titlepage' in self.oeb_book.guide:
             self.log.debug('Generating cover page...')
             href = self.oeb_book.guide['titlepage'].href
             item = self.oeb_book.manifest.hrefs[href]
             if item.spine_position is None:
-                stylizer = Stylizer(item.data, item.href, self.oeb_book,
-                        self.opts, self.opts.output_profile)
+                stylizer = Stylizer(item.data, item.href, self.oeb_book, self.opts, self.opts.output_profile)
                 output += ''.join(self.dump_text(item.data.find(XHTML('body')), stylizer, item))
         return output
 
@@ -98,22 +97,22 @@ class RBMLizer:
         toc = ['']
         if self.opts.inline_toc:
             self.log.debug('Generating table of contents...')
-            toc.append('<H1>%s</H1><UL>\n' % _('Table of Contents:'))
+            toc.append('<H1>{}</H1><UL>\n'.format(_('Table of Contents:')))
             for item in self.oeb_book.toc:
                 if item.href in self.link_hrefs.keys():
                     toc.append(f'<LI><A HREF="#{self.link_hrefs[item.href]}">{item.title}</A></LI>\n')
                 else:
-                    self.oeb.warn('Ignoring toc item: %s not found in document.' % item)
+                    self.log.warn(f'Ignoring toc item: {item} not found in document.')
             toc.append('</UL>')
         return ''.join(toc)
 
     def get_text(self):
-        from calibre.ebooks.oeb.stylizer import Stylizer
         from calibre.ebooks.oeb.base import XHTML
+        from calibre.ebooks.oeb.stylizer import Stylizer
 
         output = ['']
         for item in self.oeb_book.spine:
-            self.log.debug('Converting %s to RocketBook HTML...' % item.href)
+            self.log.debug(f'Converting {item.href} to RocketBook HTML...')
             stylizer = Stylizer(item.data, item.href, self.oeb_book, self.opts, self.opts.output_profile)
             output.append(self.add_page_anchor(item))
             output += self.dump_text(item.data.find(XHTML('body')), stylizer, item)
@@ -125,34 +124,34 @@ class RBMLizer:
     def get_anchor(self, page, aid):
         aid = f'{page.href}#{aid}'
         if aid not in self.link_hrefs.keys():
-            self.link_hrefs[aid] = 'calibre_link-%s' % len(self.link_hrefs.keys())
+            self.link_hrefs[aid] = f'calibre_link-{len(self.link_hrefs.keys())}'
         aid = self.link_hrefs[aid]
-        return '<A NAME="%s"></A>' % aid
+        return f'<A NAME="{aid}"></A>'
 
     def clean_text(self, text):
         # Remove anchors that do not have links
         anchors = set(re.findall(r'(?<=<A NAME=").+?(?="></A>)', text))
         links = set(re.findall(r'(?<=<A HREF="#).+?(?=">)', text))
         for unused in anchors.difference(links):
-            text = text.replace('<A NAME="%s"></A>' % unused, '')
+            text = text.replace(f'<A NAME="{unused}"></A>', '')
 
         return text
 
-    def dump_text(self, elem, stylizer, page, tag_stack=[]):
+    def dump_text(self, elem, stylizer, page, tag_stack=None):
         from calibre.ebooks.oeb.base import XHTML_NS, barename, namespace
 
-        if not isinstance(elem.tag, string_or_bytes) or namespace(elem.tag) != XHTML_NS:
+        if tag_stack is None:
+            tag_stack = []
+        if not isinstance(elem.tag, (str, bytes)) or namespace(elem.tag) != XHTML_NS:
             p = elem.getparent()
-            if p is not None and isinstance(p.tag, string_or_bytes) and namespace(p.tag) == XHTML_NS \
-                    and elem.tail:
+            if p is not None and isinstance(p.tag, (str, bytes)) and namespace(p.tag) == XHTML_NS and elem.tail:
                 return [elem.tail]
             return ['']
 
         text = ['']
         style = stylizer.style(elem)
 
-        if style['display'] in ('none', 'oeb-page-head', 'oeb-page-foot') \
-           or style['visibility'] == 'hidden':
+        if style['display'] in ('none', 'oeb-page-head', 'oeb-page-foot') or style['visibility'] == 'hidden':
             if hasattr(elem, 'tail') and elem.tail:
                 return [elem.tail]
             return ['']
@@ -165,13 +164,13 @@ class RBMLizer:
         if tag in IMAGE_TAGS:
             if elem.attrib.get('src', None):
                 if page.abshref(elem.attrib['src']) not in self.name_map.keys():
-                    self.name_map[page.abshref(elem.attrib['src'])] = unique_name('%s' % len(self.name_map.keys()), self.name_map.keys())
-                text.append('<IMG SRC="%s">' % self.name_map[page.abshref(elem.attrib['src'])])
+                    self.name_map[page.abshref(elem.attrib['src'])] = unique_name(f'{len(self.name_map.keys())}', self.name_map.keys())
+                text.append('<IMG SRC="{}">'.format(self.name_map[page.abshref(elem.attrib['src'])]))
 
         rb_tag = tag.upper() if tag in TAGS else None
         if rb_tag:
             tag_count += 1
-            text.append('<%s>' % rb_tag)
+            text.append(f'<{rb_tag}>')
             tag_stack.append(rb_tag)
 
         # Anchors links
@@ -183,9 +182,9 @@ class RBMLizer:
                     if '#' not in href:
                         href += '#'
                     if href not in self.link_hrefs.keys():
-                        self.link_hrefs[href] = 'calibre_link-%s' % len(self.link_hrefs.keys())
+                        self.link_hrefs[href] = f'calibre_link-{len(self.link_hrefs.keys())}'
                     href = self.link_hrefs[href]
-                    text.append('<A HREF="#%s">' % href)
+                    text.append(f'<A HREF="#{href}">')
                 tag_count += 1
                 tag_stack.append('A')
 
@@ -200,7 +199,7 @@ class RBMLizer:
             if style_tag:
                 style_tag = style_tag.upper()
                 tag_count += 1
-                text.append('<%s>' % style_tag)
+                text.append(f'<{style_tag}>')
                 tag_stack.append(style_tag)
 
         # Process tags that contain text.
@@ -211,7 +210,7 @@ class RBMLizer:
             text += self.dump_text(item, stylizer, page, tag_stack)
 
         close_tag_list = []
-        for i in range(0, tag_count):
+        for i in range(tag_count):
             close_tag_list.insert(0, tag_stack.pop())
 
         text += self.close_tags(close_tag_list)
@@ -223,8 +222,8 @@ class RBMLizer:
 
     def close_tags(self, tags):
         text = ['']
-        for i in range(0, len(tags)):
+        for i in range(len(tags)):
             tag = tags.pop()
-            text.append('</%s>' % tag)
+            text.append(f'</{tag}>')
 
         return text

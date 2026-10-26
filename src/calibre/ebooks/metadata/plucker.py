@@ -1,24 +1,23 @@
-'''
-Read meta information from Plucker pdb files.
-'''
+# License: GPLv3 Copyright: 2009, John Schember <john@nachtimwald.com>
 
-__license__   = 'GPL v3'
-__copyright__ = '2009, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
+"""
+Read meta information from Plucker pdb files.
+"""
 
 import struct
 from datetime import datetime
 
 from calibre.ebooks.metadata import MetaInformation
 from calibre.ebooks.pdb.header import PdbHeaderReader
-from calibre.ebooks.pdb.plucker.reader import SectionHeader, DATATYPE_METADATA, \
-    MIBNUM_TO_NAME
+from calibre.ebooks.pdb.plucker.reader import DATATYPE_METADATA, MIBNUM_TO_NAME, SectionHeader
+from calibre.utils.date import local_tz
+from calibre.utils.localization import _
 
 
 def get_metadata(stream, extract_cover=True):
-    '''
+    """
     Return metadata as a L{MetaInfo} object
-    '''
+    """
     mi = MetaInformation(_('Unknown'), [_('Unknown')])
     stream.seek(0)
 
@@ -35,7 +34,7 @@ def get_metadata(stream, extract_cover=True):
         return mi
 
     default_encoding = 'latin-1'
-    record_count, = struct.unpack('>H', section_data[0:2])
+    (record_count,) = struct.unpack('>H', section_data[0:2])
     adv = 0
     title = None
     author = None
@@ -48,25 +47,25 @@ def get_metadata(stream, extract_cover=True):
 
         # CharSet
         if type == 1:
-            val, = struct.unpack('>H', section_data[6+adv:8+adv])
+            (val,) = struct.unpack('>H', section_data[6 + adv : 8 + adv])
             default_encoding = MIBNUM_TO_NAME.get(val, 'latin-1')
         # Author
         elif type == 4:
-            author = section_data[6+adv+(2*length)]
+            author = section_data[6 + adv + (2 * length)]
         # Title
         elif type == 5:
-            title = section_data[6+adv+(2*length)]
+            title = section_data[6 + adv + (2 * length)]
         # Publication Date
         elif type == 6:
-            pubdate, = struct.unpack('>I', section_data[6+adv:6+adv+4])
+            (pubdate,) = struct.unpack('>I', section_data[6 + adv : 6 + adv + 4])
 
-        adv += 2*length
+        adv += 2 * length
 
     if title:
         mi.title = title.replace('\0', '').decode(default_encoding, 'replace')
     if author:
         author = author.replace('\0', '').decode(default_encoding, 'replace')
         mi.author = author.split(',')
-    mi.pubdate = datetime.fromtimestamp(pubdate)
+    mi.pubdate = datetime.fromtimestamp(pubdate, tz=local_tz)
 
     return mi

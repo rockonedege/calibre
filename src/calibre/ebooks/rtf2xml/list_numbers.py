@@ -11,23 +11,26 @@
 #                                                                       #
 #########################################################################
 import os
+
 from calibre.ebooks.rtf2xml import copy
 from calibre.ptempfile import better_mktemp
+
 from . import open_for_read, open_for_write
 
 
 class ListNumbers:
     """
-        RTF puts list numbers outside of the paragraph. The public method
-        in this class put the list numbers inside the paragraphs.
+    RTF puts list numbers outside of the paragraph. The public method
+    in this class put the list numbers inside the paragraphs.
     """
 
-    def __init__(self,
-            in_file,
-            bug_handler,
-            copy=None,
-            run_level=1,
-            ):
+    def __init__(
+        self,
+        in_file,
+        bug_handler,
+        copy=None,
+        run_level=1,
+    ):
         """
         Required:
             'file'
@@ -37,7 +40,7 @@ class ListNumbers:
             directory from which the script is run.)
         Returns:
             nothing
-            """
+        """
         self.__file = in_file
         self.__bug_handler = bug_handler
         self.__copy = copy
@@ -51,15 +54,15 @@ class ListNumbers:
         Return:
             Nothing
         """
-        self.__state = "default"
+        self.__state = 'default'
         self.__list_chunk = ''
         self.__previous_line = ''
         self.__list_text_ob_count = ''
-        self.__state_dict={
-        'default'           :   self.__default_func,
-        'after_ob'          :   self.__after_ob_func,
-        'list_text'         :   self.__list_text_func,
-        'after_list_text'   :   self.__after_list_text_func
+        self.__state_dict = {
+            'default': self.__default_func,
+            'after_ob': self.__after_ob_func,
+            'list_text': self.__list_text_func,
+            'after_list_text': self.__after_list_text_func,
         }
 
     def __after_ob_func(self, line):
@@ -69,11 +72,10 @@ class ListNumbers:
             self, line
         Returns:
             Nothing
-            """
+        """
         if self.__token_info == 'cw<ls<list-text_':
             self.__state = 'list_text'
-            self.__list_chunk = self.__list_chunk + \
-            self.__previous_line + line
+            self.__list_chunk = self.__list_chunk + self.__previous_line + line
             self.__list_text_ob = self.__ob_count
             self.__cb_count = 0
         else:
@@ -93,7 +95,8 @@ class ListNumbers:
             self.__write_obj.write('mi<mk<lst-tx-beg\n')
             self.__write_obj.write(
                 # 'mi<tg<open-att__<list-text<type>%s\n' % self.__list_type)
-                'mi<tg<open-att__<list-text\n')
+                'mi<tg<open-att__<list-text\n'
+            )
             self.__write_obj.write(self.__list_chunk)
             self.__write_obj.write('mi<tg<close_____<list-text\n')
             self.__write_obj.write('mi<mk<lst-tx-end\n')
@@ -108,8 +111,8 @@ class ListNumbers:
         text_string = ''
         for line in lines:
             if line[0:5] == 'tx<hx':
-                if line[17:] == '\'B7':
-                    return "unordered"
+                if line[17:] == "'B7":
+                    return 'unordered'
             elif line[0:5] == 'tx<nu':
                 text_string += line[17:]
         text_string = text_string.replace('.', '')
@@ -117,11 +120,9 @@ class ListNumbers:
         text_string = text_string.replace(')', '')
         if text_string.isdigit():
             return 'ordered'
-        """
-        sys.stderr.write('module is list_numbers\n')
-        sys.stderr.write('method is __determine type\n')
-        sys.stderr.write('Couldn\'t get type of list\n')
-        """
+        # sys.stderr.write('module is list_numbers\n')
+        # sys.stderr.write('method is __determine type\n')
+        # sys.stderr.write("Couldn't get type of list\n")
         # must be some type of ordered list -- just a guess!
         return 'unordered'
 
@@ -134,12 +135,12 @@ class ListNumbers:
             self, line
         Returns:
             Nothing
-            """
+        """
         if self.__list_text_ob == self.__cb_count:
             self.__state = 'after_list_text'
             self.__right_after_list_text = 1
             self.__list_type = self.__determine_list_type(self.__list_chunk)
-            self.__write_obj.write('mi<mk<list-type_<%s\n' % self.__list_type)
+            self.__write_obj.write(f'mi<mk<list-type_<{self.__list_type}\n')
         if self.__token_info != 'cw<pf<par-def___':
             self.__list_chunk = self.__list_chunk + line
 
@@ -153,7 +154,7 @@ class ListNumbers:
             self, line
         Returns:
             Nothing
-            """
+        """
         if self.__token_info == 'ob<nu<open-brack':
             self.__state = 'after_ob'
             self.__previous_line = line
@@ -190,11 +191,12 @@ class ListNumbers:
             if self.__token_info == 'cb<nu<clos-brack':
                 self.__cb_count = line[-5:-1]
             action = self.__state_dict.get(self.__state)
-            action(line)
+            if action is not None:
+                action(line)
         read_obj.close()
         self.__write_obj.close()
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "list_numbers.data")
+            copy_obj.copy_file(self.__write_to, 'list_numbers.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)

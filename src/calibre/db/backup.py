@@ -1,12 +1,10 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import weakref, traceback, sys
-from threading import Thread, Event
+import sys
+import traceback
+import weakref
+from threading import Event, Thread
 
 from calibre.ebooks.metadata.opf2 import metadata_to_opf
 
@@ -21,14 +19,14 @@ class Abort(Exception):
 
 
 class MetadataBackup(Thread):
-    '''
+    """
     Continuously backup changed metadata into OPF files
     in the book directory. This class runs in its own
     thread.
-    '''
+    """
 
     def __init__(self, db, interval=2, scheduling_interval=0.1):
-        Thread.__init__(self)
+        super().__init__(name='MetadataBackup', daemon=True)
         self.daemon = True
         self._db = weakref.ref(getattr(db, 'new_api', db))
         self.stop_running = Event()
@@ -53,7 +51,8 @@ class MetadataBackup(Thread):
     def run(self):
         while not self.stop_running.is_set():
             try:
-                self.wait(self.interval)
+                if self.wait(self.interval):
+                    break
                 self.do_one()
             except Abort:
                 break
@@ -68,13 +67,14 @@ class MetadataBackup(Thread):
                 if self.stop_running.is_set() or self.db.is_closed:
                     return
                 traceback.print_exc()
+
         try:
             book_id = self.db.get_a_dirtied_book()
             if book_id is None:
                 return
         except Abort:
             raise
-        except:
+        except Exception:
             # Happens during interpreter shutdown
             return
 
@@ -82,13 +82,13 @@ class MetadataBackup(Thread):
 
         try:
             mi, sequence = self.db.get_metadata_for_dump(book_id)
-        except:
+        except Exception:
             prints('Failed to get backup metadata for id:', book_id, 'once')
             traceback.print_exc()
             self.wait(self.interval)
             try:
                 mi, sequence = self.db.get_metadata_for_dump(book_id)
-            except:
+            except Exception:
                 prints('Failed to get backup metadata for id:', book_id, 'again, giving up')
                 traceback.print_exc()
                 return
@@ -104,7 +104,7 @@ class MetadataBackup(Thread):
 
         try:
             raw = metadata_to_opf(mi)
-        except:
+        except Exception:
             prints('Failed to convert to opf for id:', book_id)
             traceback.print_exc()
             self.db.clear_dirtied(book_id, sequence)
@@ -114,13 +114,13 @@ class MetadataBackup(Thread):
 
         try:
             self.db.write_backup(book_id, raw)
-        except:
+        except Exception:
             prints('Failed to write backup metadata for id:', book_id, 'once')
             traceback.print_exc()
             self.wait(self.interval)
             try:
                 self.db.write_backup(book_id, raw)
-            except:
+            except Exception:
                 prints('Failed to write backup metadata for id:', book_id, 'again, giving up')
                 traceback.print_exc()
                 return

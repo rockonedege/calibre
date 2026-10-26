@@ -1,28 +1,39 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2016, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import os
 from io import BytesIO
 
 from calibre.utils.img import (
-    image_and_format_from_data, clone_image, null_image, resize_image,
-    overlay_image, rotate_image, quantize_image, remove_borders_from_image,
-    add_borders_to_image, gaussian_blur_image, create_canvas, despeckle_image,
-    image_to_data, flip_image, image_has_transparent_pixels, set_image_opacity,
-    gaussian_sharpen_image, texture_image, grayscale_image
+    add_borders_to_image,
+    clone_image,
+    create_canvas,
+    despeckle_image,
+    flip_image,
+    gaussian_blur_image,
+    gaussian_sharpen_image,
+    grayscale_image,
+    image_and_format_from_data,
+    image_has_transparent_pixels,
+    image_to_data,
+    null_image,
+    overlay_image,
+    quantize_image,
+    remove_borders_from_image,
+    resize_image,
+    rotate_image,
+    set_image_opacity,
+    texture_image,
 )
 from calibre.utils.imghdr import identify
 
 
 class PixelWand:
-
     def __init__(self):
         self.color = '#ffffff'
 
 
 class Image:
-
     def __init__(self):
         self.read_format = None
         self.write_format = None
@@ -40,13 +51,14 @@ class Image:
         if hasattr(path_or_file, 'read'):
             self.load(path_or_file.read())
         else:
-            with lopen(path_or_file, 'rb') as f:
+            with open(path_or_file, 'rb') as f:
                 self.load(f.read())
 
     def load(self, data):
         if not data:
             raise ValueError('No image data present')
         self.img, self.read_format = image_and_format_from_data(data)
+
     read = load
 
     def from_qimage(self, img):
@@ -101,7 +113,7 @@ class Image:
             format = ext[1:]
         format = format.upper()
 
-        with lopen(path, 'wb') as f:
+        with open(path, 'wb') as f:
             f.write(self.export(format))
 
     def compose(self, img, left=0, top=0, operation='OverCompositeOp'):
@@ -121,9 +133,10 @@ class Image:
         return width, height, fmt
 
     def remove_border(self, fuzz=None):
-        if fuzz is not None and fuzz < 0 or fuzz > 255:
+        if fuzz is not None and (fuzz < 0 or fuzz > 255):
             fuzz = None
         self.img = remove_borders_from_image(self.img, fuzz)
+
     trim = remove_border
 
     def add_border(self, pixel_wand, dx, dy):
@@ -145,6 +158,7 @@ class Image:
         if fmt.lower() == 'gif':
             data = image_to_data(self.img, fmt='PNG', png_compression_level=0)
             from PIL import Image
+
             i = Image.open(BytesIO(data))
             buf = BytesIO()
             i.save(buf, 'gif')

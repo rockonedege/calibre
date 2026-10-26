@@ -1,27 +1,26 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2008, Kovid Goyal kovid@kovidgoyal.net'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2008, Kovid Goyal kovid@kovidgoyal.net
 
 """
 Provides abstraction for metadata reading.writing from a variety of ebook formats.
 """
-import os, sys, re
+
+import os
+import re
+import sys
 from contextlib import suppress
+from urllib.parse import quote, urlparse
 
-from calibre import relpath, guess_type, prints, force_unicode
+from calibre import force_unicode, guess_type, prints, relpath
 from calibre.utils.config_base import tweaks
-from polyglot.builtins import codepoint_to_chr, iteritems, as_unicode
-from polyglot.urllib import quote, unquote, urlparse
-
+from calibre.utils.localization import _
+from polyglot.builtins import as_unicode
+from polyglot.urllib import unquote
 
 try:
     _author_pat = re.compile(tweaks['authors_split_regex'])
 except Exception:
-    prints('Author split regexp:', tweaks['authors_split_regex'],
-            'is invalid, using default')
+    prints('Author split regexp:', tweaks['authors_split_regex'], 'is invalid, using default')
     _author_pat = re.compile(r'(?i),?\s+(and|with)\s+')
 
 
@@ -45,11 +44,12 @@ def remove_bracketed_text(src, brackets=None):
     if brackets is None:
         brackets = {'(': ')', '[': ']', '{': '}'}
     from collections import Counter
+
     counts = Counter()
     total = 0
     buf = []
     src = force_unicode(src)
-    rmap = {v: k for k, v in iteritems(brackets)}
+    rmap = {v: k for k, v in brackets.items()}
     for char in src:
         if char in brackets:
             counts[char] += 1
@@ -65,13 +65,13 @@ def remove_bracketed_text(src, brackets=None):
 
 
 def author_to_author_sort(
-        author,
-        method=None,
-        copywords=None,
-        use_surname_prefixes=None,
-        surname_prefixes=None,
-        name_prefixes=None,
-        name_suffixes=None
+    author,
+    method=None,
+    copywords=None,
+    use_surname_prefixes=None,
+    surname_prefixes=None,
+    name_prefixes=None,
+    name_suffixes=None,
 ):
     if not author:
         return ''
@@ -96,12 +96,14 @@ def author_to_author_sort(
 
     author_use_surname_prefixes = tweaks['author_use_surname_prefixes'] if use_surname_prefixes is None else use_surname_prefixes
     if author_use_surname_prefixes:
-        author_surname_prefixes = frozenset(x.lower() for x in (tweaks['author_surname_prefixes'] if surname_prefixes is None else surname_prefixes))
+        author_surname_prefixes = frozenset(
+            force_unicode(x).lower() for x in (tweaks['author_surname_prefixes'] if surname_prefixes is None else surname_prefixes)
+        )
         if len(tokens) == 2 and tokens[0].lower() in author_surname_prefixes:
             return author
 
     prefixes = {force_unicode(y).lower() for y in (tweaks['author_name_prefixes'] if name_prefixes is None else name_prefixes)}
-    prefixes |= {y+'.' for y in prefixes}
+    prefixes |= {y + '.' for y in prefixes}
 
     for first in range(len(tokens)):
         if tokens[first].lower() not in prefixes:
@@ -110,7 +112,7 @@ def author_to_author_sort(
         return author
 
     suffixes = {force_unicode(y).lower() for y in (tweaks['author_name_suffixes'] if name_suffixes is None else name_suffixes)}
-    suffixes |= {y+'.' for y in suffixes}
+    suffixes |= {y + '.' for y in suffixes}
 
     for last in range(len(tokens) - 1, first - 1, -1):
         if tokens[last].lower() not in suffixes:
@@ -118,14 +120,14 @@ def author_to_author_sort(
     else:
         return author
 
-    suffix = ' '.join(tokens[last + 1:])
+    suffix = ' '.join(tokens[last + 1 :])
 
     if author_use_surname_prefixes:
         if last > first and tokens[last - 1].lower() in author_surname_prefixes:
             tokens[last - 1] += ' ' + tokens[last]
             last -= 1
 
-    atokens = tokens[last:last + 1] + tokens[first:last]
+    atokens = tokens[last : last + 1] + tokens[first:last]
     num_toks = len(atokens)
     if suffix:
         atokens.append(suffix)
@@ -149,6 +151,7 @@ def get_title_sort_pat(lang=None):
         return ans
     q = lang
     from calibre.utils.localization import canonicalize_lang, get_lang
+
     if lang is None:
         q = tweaks['default_language_for_title_sort']
         if q is None:
@@ -165,19 +168,36 @@ def get_title_sort_pat(lang=None):
         ans = frozenset((r'A\s+', r'The\s+', r'An\s+'))
     if ans:
         ans = '|'.join(ans)
-        ans = '^(%s)'%ans
+        ans = f'^({ans})'
         try:
             ans = re.compile(ans, re.IGNORECASE)
-        except:
+        except Exception:
             ans = re.compile(r'^(A|The|An)\s+', re.IGNORECASE)
     else:
-        ans = re.compile('^$')  # matches only the empty string
+        ans = re.compile(r'^$')  # matches only the empty string
     _title_pats[lang] = ans
     return ans
 
 
-_ignore_starts = '\'"'+''.join(codepoint_to_chr(x) for x in
-        list(range(0x2018, 0x201e))+[0x2032, 0x2033])
+quote_pairs = {
+    # https://en.wikipedia.org/wiki/Quotation_mark
+    '"': ('"',),
+    "'": ("'",),
+    '“': ('”', '“'),
+    '”': ('”', '”'),
+    '„': ('”', '“'),
+    '‚': ('’', '‘'),
+    '’': ('’', '‘'),
+    '‘': ('’', '‘'),
+    '‹': ('›',),
+    '›': ('‹',),
+    '《': ('》',),
+    '〈': ('〉',),
+    '»': ('«', '»'),
+    '«': ('«', '»'),
+    '「': ('」',),
+    '『': ('』',),
+}
 
 
 def title_sort(title, order=None, lang=None):
@@ -186,8 +206,11 @@ def title_sort(title, order=None, lang=None):
     title = title.strip()
     if order == 'strictly_alphabetic':
         return title
-    if title and title[0] in _ignore_starts:
+    if title and title[0] in quote_pairs:
+        q = title[0]
         title = title[1:]
+        if title and title[-1] in quote_pairs[q]:
+            title = title[:-1]
     match = get_title_sort_pat(lang).search(title)
     if match:
         try:
@@ -196,16 +219,21 @@ def title_sort(title, order=None, lang=None):
             pass
         else:
             if prep:
-                title = title[len(prep):] + ', ' + prep
-                if title[0] in _ignore_starts:
+                title = title[len(prep) :] + ', ' + prep
+                if title[0] in quote_pairs:
+                    q = title[0]
                     title = title[1:]
+                    if title and title[-1] in quote_pairs[q]:
+                        title = title[:-1]
     return title.strip()
 
 
-coding = list(zip(
-[1000,900,500,400,100,90,50,40,10,9,5,4,1],
-["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"]
-))
+coding = list(
+    zip(
+        [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1],
+        ['M', 'CM', 'D', 'CD', 'C', 'XC', 'L', 'XL', 'X', 'IX', 'V', 'IV', 'I'],
+    )
+)
 
 
 def roman(num):
@@ -226,17 +254,16 @@ def fmt_sidx(i, fmt='%.2f', use_roman=False):
         i = float(i)
     except Exception:
         return str(i)
-    if int(i) == float(i):
-        return roman(int(i)) if use_roman else '%d'%int(i)
-    ans = fmt%i
+    if int(i) == i:
+        return roman(int(i)) if use_roman else str(int(i))
+    ans = fmt % i
     if '.' in ans:
         ans = ans.rstrip('0')
     return ans
 
 
 class Resource:
-
-    '''
+    """
     Represents a resource (usually a file on the filesystem or a URL pointing
     to the web. Such resources are commonly referred to in OPF files.
 
@@ -246,7 +273,7 @@ class Resource:
     :member:`mime_type`
     :method:`href`
 
-    '''
+    """
 
     def __init__(self, href_or_path, basedir=os.getcwd(), is_path=True):
         self._href = None
@@ -255,7 +282,7 @@ class Resource:
         self.fragment = ''
         try:
             self.mime_type = guess_type(href_or_path)[0]
-        except:
+        except Exception:
             self.mime_type = None
         if self.mime_type is None:
             self.mime_type = 'application/octet-stream'
@@ -279,13 +306,13 @@ class Resource:
                 self.fragment = unquote(url[-1])
 
     def href(self, basedir=None):
-        '''
+        """
         Return a URL pointing to this resource. If it is a file on the filesystem
         the URL is relative to `basedir`.
 
         `basedir`: If None, the basedir of this resource is used (see :method:`set_basedir`).
         If this resource has no basedir, then the current working directory is used as the basedir.
-        '''
+        """
         if basedir is None:
             if self._basedir:
                 basedir = self._basedir
@@ -294,16 +321,16 @@ class Resource:
         if self.path is None:
             return self._href
         f = self.fragment.encode('utf-8') if isinstance(self.fragment, str) else self.fragment
-        frag = '#'+as_unicode(quote(f)) if self.fragment else ''
+        frag = '#' + as_unicode(quote(f)) if self.fragment else ''
         if self.path == basedir:
-            return ''+frag
+            return '' + frag
         try:
             rpath = relpath(self.path, basedir)
         except OSError:  # On windows path and basedir could be on different drives
             rpath = self.path
         if isinstance(rpath, str):
             rpath = rpath.encode('utf-8')
-        return as_unicode(quote(rpath.replace(os.sep, '/')))+frag
+        return as_unicode(quote(rpath.replace(os.sep.encode('utf-8'), b'/'))) + frag
 
     def set_basedir(self, path):
         self._basedir = path
@@ -312,11 +339,10 @@ class Resource:
         return self._basedir
 
     def __repr__(self):
-        return 'Resource(%s, %s)'%(repr(self.path), repr(self.href()))
+        return f'Resource({self.path!r}, {self.href()!r})'
 
 
 class ResourceCollection:
-
     def __init__(self):
         self._resources = []
 
@@ -334,31 +360,32 @@ class ResourceCollection:
 
     def __str__(self):
         resources = map(repr, self)
-        return '[%s]'%', '.join(resources)
+        return '[{}]'.format(', '.join(resources))
 
     def __repr__(self):
         return str(self)
 
     def append(self, resource):
         if not isinstance(resource, Resource):
-            raise ValueError('Can only append objects of type Resource')
+            raise TypeError('Can only append objects of type Resource')
         self._resources.append(resource)
 
     def remove(self, resource):
         self._resources.remove(resource)
 
     def replace(self, start, end, items):
-        'Same as list[start:end] = items'
+        "Same as list[start:end] = items"
         self._resources[start:end] = items
 
     @staticmethod
     def from_directory_contents(top, topdown=True):
         collection = ResourceCollection()
-        for spec in os.walk(top, topdown=topdown):
-            path = os.path.abspath(os.path.join(spec[0], spec[1]))
-            res = Resource.from_path(path)
-            res.set_basedir(top)
-            collection.append(res)
+        for dirpath, _dirnames, filenames in os.walk(top, topdown=topdown):
+            for fname in filenames:
+                path = os.path.abspath(os.path.join(dirpath, fname))
+                res = Resource(path)
+                res.set_basedir(top)
+                collection.append(res)
         return collection
 
     def set_basedir(self, path):
@@ -367,11 +394,12 @@ class ResourceCollection:
 
 
 def MetaInformation(title, authors=(_('Unknown'),)):
-    ''' Convenient encapsulation of book metadata, needed for compatibility
-        @param title: title or ``_('Unknown')`` or a MetaInformation object
-        @param authors: List of strings or []
-    '''
+    """Convenient encapsulation of book metadata, needed for compatibility
+    @param title: title or ``_('Unknown')`` or a MetaInformation object
+    @param authors: List of strings or []
+    """
     from calibre.ebooks.metadata.book.base import Metadata
+
     mi = None
     if hasattr(title, 'title') and hasattr(title, 'authors'):
         mi = title
@@ -381,12 +409,12 @@ def MetaInformation(title, authors=(_('Unknown'),)):
 
 
 def check_digit_for_isbn10(isbn):
-    check = sum((i+1)*int(isbn[i]) for i in range(9)) % 11
+    check = sum((i + 1) * int(isbn[i]) for i in range(9)) % 11
     return 'X' if check == 10 else str(check)
 
 
 def check_digit_for_isbn13(isbn):
-    check = 10 - sum((1 if i%2 ==0 else 3)*int(isbn[i]) for i in range(12)) % 10
+    check = 10 - sum((1 if i % 2 == 0 else 3) * int(isbn[i]) for i in range(12)) % 10
     if check == 10:
         check = 0
     return str(check)
@@ -462,7 +490,7 @@ def format_isbn(isbn):
 
 
 def check_doi(doi):
-    'Check if something that looks like a DOI is present anywhere in the string'
+    "Check if something that looks like a DOI is present anywhere in the string"
     if not doi:
         return None
     doi_check = re.search(r'10\.\d{4}/\S+', doi)

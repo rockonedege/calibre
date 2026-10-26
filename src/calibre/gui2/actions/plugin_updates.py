@@ -1,18 +1,14 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2011, Grant Drake <grant.drake@gmail.com>
 
+from qt.core import QApplication, QIcon, Qt
 
-__license__   = 'GPL v3'
-__copyright__ = '2011, Grant Drake <grant.drake@gmail.com>'
-__docformat__ = 'restructuredtext en'
-
-from qt.core import QApplication, Qt, QIcon
 from calibre.gui2.actions import InterfaceAction
-from calibre.gui2.dialogs.plugin_updater import (PluginUpdaterDialog,
-                                                 FILTER_ALL, FILTER_UPDATE_AVAILABLE)
+from calibre.gui2.dialogs.plugin_updater import FILTER_ALL, FILTER_UPDATE_AVAILABLE, PluginUpdaterDialog
+from calibre.utils.localization import _
 
 
 class PluginUpdaterAction(InterfaceAction):
-
     name = 'Plugin Updater'
     action_spec = (_('Plugin updater'), None, _('Update any plugins you have installed in calibre'), ())
     action_type = 'current'

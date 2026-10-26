@@ -1,16 +1,14 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from qt.core import QDialog
-from polyglot.builtins import iteritems
 
 from calibre.gui2 import gprefs
 from calibre.gui2.actions import InterfaceAction
+from calibre.utils.localization import _, ngettext
 
 
 class TagMapAction(InterfaceAction):
-
     name = 'Tag Mapper'
     action_spec = (_('Tag mapper'), 'tags.png', _('Filter/transform the tags for books in the library'), None)
     action_type = 'current'
@@ -31,16 +29,23 @@ class TagMapAction(InterfaceAction):
         from calibre.ebooks.metadata.tag_mapper import map_tags
         from calibre.gui2.tag_mapper import RulesDialog
         from calibre.gui2.widgets import BusyCursor
+
         d = RulesDialog(self.gui)
-        d.setWindowTitle(ngettext(
-            'Map tags for one book in the library',
-            'Map tags for {} books in the library', len(book_ids)).format(len(book_ids)))
+        d.setWindowTitle(ngettext('Map tags for one book in the library', 'Map tags for {} books in the library', len(book_ids)).format(len(book_ids)))
         d.rules = gprefs.get('library-tag-mapper-ruleset', ())
-        txt = ngettext(
-            'The changes will be applied to the <b>selected book</b>',
-            'The changes will be applied to the <b>{} selected books</b>', len(book_ids)) if selected else ngettext(
-            'The changes will be applied to <b>one book in the library</b>',
-            'The changes will be applied to <b>{} books in the library</b>', len(book_ids))
+        txt = (
+            ngettext(
+                'The changes will be applied to the <b>selected book</b>',
+                'The changes will be applied to the <b>{} selected books</b>',
+                len(book_ids),
+            )
+            if selected
+            else ngettext(
+                'The changes will be applied to <b>one book in the library</b>',
+                'The changes will be applied to <b>{} books in the library</b>',
+                len(book_ids),
+            )
+        )
         d.edit_widget.msg_label.setText(d.edit_widget.msg_label.text() + '<p>' + txt.format(len(book_ids)))
         if d.exec() != QDialog.DialogCode.Accepted:
             return
@@ -50,7 +55,7 @@ class TagMapAction(InterfaceAction):
             db = self.gui.current_db.new_api
             tag_map = db.all_field_for('tags', book_ids)
             changed_tag_map = {}
-            for book_id, tags in iteritems(tag_map):
+            for book_id, tags in tag_map.items():
                 tags = list(tags)
                 new_tags = map_tags(tags, rules)
                 if tags != new_tags:

@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from calibre import prints
 from calibre.db import _get_series_values
 from calibre.srv.changes import metadata
+from calibre.utils.localization import _
 
 readonly = False
 version = 0  # change this if you change signature of implementation()
@@ -28,7 +28,7 @@ def implementation(db, notify_changes, col, book_id, val, append):
             msg = _('Data set to: {} [{}]').format(db.field_for(field, book_id), db.field_for(field + '_index', book_id))
         else:
             if append and fm['is_multiple']:
-                val = list(db.field_for(field, book_id)) + [val]
+                val = list(db.field_for(field, book_id)) + val.split(fm['is_multiple']['ui_to_list'])
             db.set_field(field, {book_id: val})
             val = db.field_for(field, book_id)
             if isinstance(val, (tuple, list)):
@@ -58,10 +58,7 @@ command.
         '--append',
         default=False,
         action='store_true',
-        help=_(
-            'If the column stores multiple values, append the specified '
-            'values to the existing ones, instead of replacing them.'
-        )
+        help=_('If the column stores multiple values, append the specified values to the existing ones, instead of replacing them.'),
     )
     return parser
 

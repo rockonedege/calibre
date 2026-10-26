@@ -3,15 +3,10 @@
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-store_version = 15  # Needed for dynamic plugin loading
+store_version = 16  # Needed for dynamic plugin loading
 
 from contextlib import closing
-try:
-    from urllib.parse import urlencode
-except ImportError:
-    from urllib import urlencode
-
-from lxml import html
+from urllib.parse import urlencode
 
 from qt.core import QUrl
 
@@ -20,12 +15,17 @@ from calibre.gui2 import open_url
 from calibre.gui2.store import StorePlugin
 from calibre.gui2.store.search_result import SearchResult
 
+try:
+    from calibre.utils.xml_parse import safe_html_fromstring
+except ImportError:
+    from lxml.html import fromstring as safe_html_fromstring
+
 SEARCH_BASE_URL = 'https://www.amazon.es/s/'
 SEARCH_BASE_QUERY = {'url': 'search-alias=digital-text'}
 BY = 'de'
 KINDLE_EDITION = 'Versión Kindle'
 DETAILS_URL = 'https://amazon.es/dp/'
-STORE_LINK =  'https://www.amazon.es'
+STORE_LINK = 'https://www.amazon.es'
 DRM_SEARCH_TEXT = 'Simultaneous Device Usage'
 DRM_FREE_TEXT = 'Unlimited'
 
@@ -34,12 +34,15 @@ def get_user_agent():
     return 'Mozilla/5.0 (Windows NT 6.1; Trident/7.0; rv:11.0) like Gecko'
 
 
-def search_amazon(query, max_results=10, timeout=60,
-                  write_html_to=None,
-                  base_url=SEARCH_BASE_URL,
-                  base_query=SEARCH_BASE_QUERY,
-                  field_keywords='field-keywords'
-                  ):
+def search_amazon(
+    query,
+    max_results=10,
+    timeout=60,
+    write_html_to=None,
+    base_url=SEARCH_BASE_URL,
+    base_query=SEARCH_BASE_QUERY,
+    field_keywords='field-keywords',
+):
     uquery = base_query.copy()
     uquery[field_keywords] = query
 
@@ -47,7 +50,8 @@ def search_amazon(query, max_results=10, timeout=60,
         if isinstance(x, type('')):
             x = x.encode('utf-8')
         return x
-    uquery = {asbytes(k):asbytes(v) for k, v in uquery.items()}
+
+    uquery = {asbytes(k): asbytes(v) for k, v in uquery.items()}
     url = base_url + '?' + urlencode(uquery)
     br = browser(user_agent=get_user_agent())
 
@@ -57,7 +61,7 @@ def search_amazon(query, max_results=10, timeout=60,
         if write_html_to is not None:
             with open(write_html_to, 'wb') as f:
                 f.write(raw)
-        doc = html.fromstring(raw)
+        doc = safe_html_fromstring(raw)
         try:
             results = doc.xpath('//div[@id="atfResults" and @class]')[0]
         except IndexError:
@@ -67,11 +71,12 @@ def search_amazon(query, max_results=10, timeout=60,
             data_xpath = "descendant-or-self::li[@class and contains(concat(' ', normalize-space(@class), ' '), ' s-result-item ')]"
             format_xpath = './/a[@title="%s"]/@title' % KINDLE_EDITION
             asin_xpath = '@data-asin'
-            cover_xpath =  "descendant-or-self::img[@class and contains(concat(' ', normalize-space(@class), ' '), ' s-access-image ')]/@src"
+            cover_xpath = "descendant-or-self::img[@class and contains(concat(' ', normalize-space(@class), ' '), ' s-access-image ')]/@src"
             title_xpath = "descendant-or-self::h2[@class and contains(concat(' ', normalize-space(@class), ' '), ' s-access-title ')]//text()"
             author_xpath = './/span[starts-with(text(), "%s ")]/following-sibling::span//text()' % BY
-            price_xpath = ('descendant::div[@class="a-row a-spacing-none" and'
-                           ' not(span[contains(@class, "kindle-unlimited")])]//span[contains(@class, "s-price")]//text()')
+            price_xpath = (
+                'descendant::div[@class="a-row a-spacing-none" and not(span[contains(@class, "kindle-unlimited")])]//span[contains(@class, "s-price")]//text()'
+            )
         else:
             return
 
@@ -100,8 +105,8 @@ def search_amazon(query, max_results=10, timeout=60,
             title = ''.join(data.xpath(title_xpath))
             author = ''.join(data.xpath(author_xpath))
             try:
-                author = author.split('by ', 1)[1].split(" (")[0]
-            except:
+                author = author.split('by ', 1)[1].split(' (')[0]
+            except Exception:
                 pass
 
             price = ''.join(data.xpath(price_xpath))
@@ -120,8 +125,7 @@ def search_amazon(query, max_results=10, timeout=60,
 
 
 class AmazonKindleStore(StorePlugin):
-
-    def open(self, parent=None, detail_item=None, external=False):
+    def open(self, gui=None, parent=None, detail_item=None, external=False):
         store_link = (DETAILS_URL + detail_item) if detail_item else STORE_LINK
         open_url(QUrl(store_link))
 
@@ -129,17 +133,14 @@ class AmazonKindleStore(StorePlugin):
         for result in search_amazon(query, max_results=max_results, timeout=timeout):
             yield result
 
-    def get_details(self, search_result, timeout):
+    def get_details(self, search_result, timeout=60):
         url = DETAILS_URL
 
         br = browser(user_agent=get_user_agent())
         with closing(br.open(url + search_result.detail_item, timeout=timeout)) as nf:
-            idata = html.fromstring(nf.read())
-            if idata.xpath('boolean(//div[@class="content"]//li/b[contains(text(), "' +
-                           DRM_SEARCH_TEXT + '")])'):
-                if idata.xpath('boolean(//div[@class="content"]//li[contains(., "' +
-                               DRM_FREE_TEXT + '") and contains(b, "' +
-                               DRM_SEARCH_TEXT + '")])'):
+            idata = safe_html_fromstring(nf.read())
+            if idata.xpath('boolean(//div[@class="content"]//li/b[contains(text(), "' + DRM_SEARCH_TEXT + '")])'):
+                if idata.xpath('boolean(//div[@class="content"]//li[contains(., "' + DRM_FREE_TEXT + '") and contains(b, "' + DRM_SEARCH_TEXT + '")])'):
                     search_result.drm = SearchResult.DRM_UNLOCKED
                 else:
                     search_result.drm = SearchResult.DRM_UNKNOWN
@@ -150,5 +151,6 @@ class AmazonKindleStore(StorePlugin):
 
 if __name__ == '__main__':
     import sys
+
     for result in search_amazon(' '.join(sys.argv[1:]), write_html_to='/t/amazon.html'):
         print(result)

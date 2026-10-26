@@ -2,19 +2,18 @@
 # vim:fileencoding=utf-8
 # License: GPLv3 Copyright: 2017, Kovid Goyal <kovid at kovidgoyal.net>
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
-import bz2
 import hashlib
 import json
 import sys
 import time
+from compression import bz2
 from threading import Thread
 
 import calibre.ebooks.metadata.sources.search_engines as builtin_search_engines
 from calibre import as_unicode, prints
-from calibre.constants import DEBUG, numeric_version
+from calibre.constants import numeric_version
 from calibre.ebooks.metadata.sources.base import Source
+from calibre.prints import debug_print
 from calibre.utils.config import JSONConfig
 from calibre.utils.https import get_https_resource_securely
 from polyglot.builtins import iteritems, itervalues
@@ -30,11 +29,6 @@ def search_engines_module():
     return current_search_engines
 
 
-def debug_print(*args, **k):
-    if DEBUG:
-        prints(*args, **k)
-
-
 def load_plugin(src):
     src = src.encode('utf-8')
     ns = {}
@@ -45,7 +39,6 @@ def load_plugin(src):
 
 
 class PatchedSearchEngines:
-
     def __init__(self, ns):
         self.__ns = ns
 
@@ -76,6 +69,7 @@ def patch_search_engines(src):
 
 def patch_plugins():
     from calibre.customize.ui import patch_metadata_plugins
+
     patches = {}
     for name, val in iteritems(cache):
         if name == 'hashes':
@@ -94,8 +88,7 @@ def patch_plugins():
 def update_needed():
     needed = {}
     current_hashes = cache.get('hashes', {})
-    hashes = get_https_resource_securely(
-        'https://code.calibre-ebook.com/metadata-sources/hashes.json')
+    hashes = get_https_resource_securely('https://code.calibre-ebook.com/metadata-sources/hashes.json')
     hashes = bz2.decompress(hashes)
     hashes = json.loads(hashes)
     for k, v in iteritems(hashes):
@@ -120,7 +113,12 @@ def update_plugin(name, updated, expected_hash):
     updated[name] = plugin, h
 
 
+_update_sources_worker: Thread | None = None
+_update_sources_errors: list[str] = []
+
+
 def main(report_error=prints, report_action=prints):
+    global _update_sources_worker
     try:
         if time.time() - cache.mtime() < UPDATE_INTERVAL:
             report_action('Metadata sources cache was recently updated not updating again')
@@ -129,8 +127,7 @@ def main(report_error=prints, report_action=prints):
             report_action('Fetching metadata source hashes...')
             needed = update_needed()
         except Exception as e:
-            report_error(
-                'Failed to get metadata sources hashes with error: {}'.format(as_unicode(e)))
+            report_error('Failed to get metadata sources hashes with error: {}'.format(as_unicode(e)))
             return
         if not needed:
             cache.touch()
@@ -141,8 +138,7 @@ def main(report_error=prints, report_action=prints):
             try:
                 update_plugin(name, updated, expected_hash)
             except Exception as e:
-                report_error('Failed to get plugin {} with error: {}'.format(
-                    name, as_unicode(e)))
+                report_error('Failed to get plugin {} with error: {}'.format(name, as_unicode(e)))
                 break
         else:
             hashes = cache.get('hashes', {})
@@ -153,15 +149,15 @@ def main(report_error=prints, report_action=prints):
                 for name in updated:
                     cache[name] = updated[name][0]
     finally:
-        update_sources.worker = None
+        _update_sources_worker = None
 
 
-def update_sources(wait_for_completion=False):
-    if update_sources.worker is not None:
+def update_sources(wait_for_completion: bool = False) -> bool:
+    global _update_sources_worker, _update_sources_errors
+    if _update_sources_worker is not None:
         return False
-    update_sources.errors = errs = []
-    update_sources.worker = t = Thread(
-        target=main, args=(errs.append, debug_print), name='MSourcesUpdater')
+    _update_sources_errors = errs = []
+    _update_sources_worker = t = Thread(target=main, args=(errs.append, debug_print), name='MSourcesUpdater')
     t.daemon = True
     t.start()
     if wait_for_completion:
@@ -169,13 +165,13 @@ def update_sources(wait_for_completion=False):
     return True
 
 
-update_sources.worker = None
-
 if __name__ == '__main__':
-    def re(x):
+    _ok: list[bool] = [True]
+
+    def _report_error(x: str) -> None:
         prints(x, file=sys.stderr)
-        re.ok = False
-    re.ok = True
-    main(re)
-    if not re.ok:
+        _ok[0] = False
+
+    main(_report_error)
+    if not _ok[0]:
         raise SystemExit(1)

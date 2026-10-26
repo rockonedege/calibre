@@ -1,43 +1,17 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-from qt.core import (
-    QDialog, QLabel, QObject, QSizePolicy, QStackedLayout, QStackedWidget, Qt,
-    QVBoxLayout, QWidget, pyqtSignal
-)
+from qt.core import QDialog, QIcon, QLabel, QSizePolicy, QStackedLayout, QStackedWidget, Qt, QToolButton, QVBoxLayout, QWidget, pyqtSignal
 
-from calibre_extensions.progress_indicator import (
-    QProgressIndicator as ProgressIndicator, draw_snake_spinner
-)
-
-draw_snake_spinner
-
-try:
-    from calibre_extensions.progress_indicator import SpinAnimator
-except ImportError:
-    # dummy class for people running from source without updated binaries
-    class SpinAnimator(QObject):
-
-        updated = pyqtSignal()
-
-        def __init__(self, parent):
-            QObject.__init__(self, parent)
-            self.running = False
-
-        def draw(self, *a):
-            pass
-
-        def start(self):
-            self.running = True
-
-        def stop(self):
-            self.running = False
-
-        def is_running(self):
-            return self.running
+from calibre_extensions.progress_indicator import QProgressIndicator as ProgressIndicator
+from calibre_extensions.progress_indicator import SpinAnimator, draw_snake_spinner  # ruff: ignore[unused-import]
 
 
 class WaitPanel(QWidget):
+    # A discreet button can be shown in the bottom right corner, via
+    # enable_corner_button(), for acting on whatever is being waited for,
+    # typically to abandon, stop or retry it.
+    corner_button_clicked = pyqtSignal()
 
     def __init__(self, msg, parent=None, size=256, interval=10):
         QWidget.__init__(self, parent)
@@ -51,6 +25,32 @@ class WaitPanel(QWidget):
         f.setPointSize(28)
         self.la.setFont(f)
         l.addWidget(self.la, 0, Qt.AlignmentFlag.AlignCenter), l.addStretch()
+        # Overlaid rather than put in the layout, so that enabling it does not
+        # move the spinner and its message off center.
+        self.corner_button = cb = QToolButton(self)
+        cb.setAutoRaise(True)
+        cb.setCursor(Qt.CursorShape.PointingHandCursor)
+        cb.clicked.connect(self.corner_button_clicked)
+        cb.hide()
+
+    def enable_corner_button(self, icon_name='view-refresh.png', tooltip=''):
+        self.corner_button.setIcon(QIcon.ic(icon_name))
+        self.corner_button.setToolTip(tooltip)
+        self.corner_button.show()
+        self.position_corner_button()
+
+    def position_corner_button(self):
+        if self.corner_button.isHidden():
+            return
+        margin = 4
+        s = self.corner_button.sizeHint()
+        # it is not in a layout, so it has to be given its size as well
+        self.corner_button.setGeometry(self.width() - s.width() - margin, self.height() - s.height() - margin, s.width(), s.height())
+        self.corner_button.raise_()
+
+    def resizeEvent(self, a0):
+        super().resizeEvent(a0)
+        self.position_corner_button()  # it is positioned relative to the panel corner
 
     @property
     def msg(self):
@@ -62,15 +62,22 @@ class WaitPanel(QWidget):
 
 
 class WaitStack(QStackedWidget):
+    corner_button_clicked = pyqtSignal()
 
     def __init__(self, msg, after=None, parent=None, size=256, interval=10):
         QStackedWidget.__init__(self, parent)
         self.wp = WaitPanel(msg, self, size, interval)
+        self.wp.corner_button_clicked.connect(self.corner_button_clicked)
         if after is None:
             after = QWidget(self)
         self.after = after
         self.addWidget(self.wp)
         self.addWidget(after)
+
+    def enable_corner_button(self, icon_name='view-refresh.png', tooltip=''):
+        # A discreet button in the bottom right corner of the wait panel, for
+        # acting on what is being waited for, see WaitPanel.
+        self.wp.enable_corner_button(icon_name, tooltip)
 
     def start(self):
         self.setCurrentWidget(self.wp)
@@ -90,7 +97,6 @@ class WaitStack(QStackedWidget):
 
 
 class WaitLayout(QStackedLayout):
-
     def __init__(self, msg, after=None, parent=None, size=256, interval=10):
         QStackedLayout.__init__(self, parent)
         self.wp = WaitPanel(msg, parent, size, interval)
@@ -121,16 +127,14 @@ def develop():
     from qt.core import QPainter, QPalette
 
     from calibre.gui2 import Application
-    from calibre_extensions.progress_indicator import SpinAnimator
 
     class Widget(QWidget):
-
         def __init__(self):
             QWidget.__init__(self)
             self.a = SpinAnimator(self)
             self.a.updated.connect(self.update)
 
-        def paintEvent(self, ev):
+        def paintEvent(self, a0):
             p = QPainter(self)
             pal = self.palette()
             self.a.draw(p, self.rect(), pal.color(QPalette.ColorRole.WindowText))
@@ -150,6 +154,7 @@ def develop():
 
 if __name__ == '__main__':
     from calibre.gui2 import Application
+
     app = Application([])
     d = QDialog()
     d.resize(64, 64)

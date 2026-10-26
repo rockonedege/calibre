@@ -42,22 +42,26 @@ Add books
 .. |adbi| image:: images/add_books.png
     :class: float-right-img
 
-|adbi| The :guilabel:`Add books` action has seven variations accessed by doing a right-click on the button.
+|adbi| The :guilabel:`Add books` action has many variations accessed by doing a right-click on the button.
 
 
-    1. **Add books from a single folder**: Opens a file chooser dialog and allows you to specify which books in a folder should be added. This action is *context sensitive*, i.e. it depends on which :ref:`catalog <catalogs>` you have selected. If you have selected the :guilabel:`Library`, books will be added to the library. If you have selected the e-book reader device, the books will be uploaded to the device, and so on.
+    #. **Add books from a single folder**: Opens a file chooser dialog and allows you to specify which books in a folder should be added. This action is *context sensitive*, i.e. it depends on which :ref:`catalog <catalogs>` you have selected. If you have selected the :guilabel:`Library`, books will be added to the library. If you have selected the e-book reader device, the books will be uploaded to the device, and so on.
 
-    2. **Add books from folders and sub-folders**: Allows you to choose a folder. The folder and all its sub-folders are scanned recursively, and any e-books found are added to the library. You can choose whether to have calibre add all files present in a single folder to a single book record or multiple book records. calibre assumes that each folder contains a single book. All e-book files in a folder are assumed to be the same book in different formats. This action is the inverse of the :ref:`Save to disk <save_to_disk_multiple>` action, i.e. you can :guilabel:`Save to disk`, delete the books and re-add them in single book per folder mode, with no lost information except for the date (this assumes you have not changed any of the setting for the Save to disk action).
+    #. **Add books from folders and sub-folders**: Allows you to choose a folder. The folder and all its sub-folders are scanned recursively, and any e-books found are added to the library. You can choose whether to have calibre add all files present in a single folder to a single book record or multiple book records. calibre assumes that each folder contains a single book. All e-book files in a folder are assumed to be the same book in different formats. This action is the inverse of the :ref:`Save to disk <save_to_disk_multiple>` action, i.e. you can :guilabel:`Save to disk`, delete the books and re-add them in single book per folder mode, with no lost information except for the date (this assumes you have not changed any of the settings for the Save to disk action).
 
-    3. **Add multiple books from archive (ZIP/RAR)**: Allows you to add multiple e-books that are stored inside the selected ZIP or RAR files. It is a convenient shortcut that avoids having to first unzip the archive and then add the books via one of the above two options.
+    #. **Add multiple books from archive (ZIP/RAR/7z)**: Allows you to add multiple e-books that are stored inside the selected archive files. It is a convenient shortcut that avoids having to first unzip the archive and then add the books via add books from folders.
 
-    4. **Add empty book (Book Entry with no formats)**: Allows you to create a blank book record. This can be used to then manually fill out the information about a book that you may not have yet in your collection.
+    #. **Add empty book (Book Entry with no formats)**: Allows you to create a blank book record. This can be used to then manually fill out the information about a book that you may not have yet in your collection.
 
-    5. **Add from ISBN**: Allows you to add one or more books by entering their ISBNs.
+    #. **Add from ISBN**: Allows you to add one or more books by entering their ISBNs.
 
-    6. **Add files to selected book records**: Allows you to add or update the files associated with an existing book in your library.
+    #. **Add files to selected book records**: Allows you to add or update the files associated with an existing book in your library.
 
-    7. **Add an empty file to selected book records**: Allows you to add an empty file of the specified format to the selected book records.
+    #. **Add files to selected book records from clipboard**: Allows you to add or update the files associated with an existing book in your library from the current contents of the clipboard
+
+    #. **Add data files to selected book records**: Allows you to add any number of extra files that will be stored in a :file:`data` sub-directory in the book directory. See :ref:`data_files` for details.
+
+    #. **Add an empty file to selected book records**: Allows you to add an empty file of the specified format to the selected book records.
 
 The :guilabel:`Add books` action can read metadata from a wide variety of e-book formats. In addition, it tries to guess metadata from the filename.
 See the :ref:`config_filename_metadata` section, to learn how to configure this.
@@ -77,12 +81,15 @@ Edit metadata
 .. |emii| image:: images/edit_meta_information.png
     :class: float-right-img
 
-|emii| The :guilabel:`Edit metadata` action has four variations which can be accessed by doing a right-click on the button.
+|emii| The :guilabel:`Edit metadata` action has many variations which can be accessed by doing a right-click on the button.
 
-    1. **Edit metadata individually**: Allows you to edit the metadata of books one-by-one with the option of fetching metadata, including covers, from the Internet. It also allows you to add or remove particular e-book formats from a book.
-    2. **Edit metadata in bulk**: Allows you to edit common metadata fields for large numbers of books simultaneously. It operates on all the books you have selected in the :ref:`Library view <search_sort>`.
-    3. **Download metadata and covers**: Downloads metadata and covers (if available) for the books that are selected in the book list.
-    4. **Merge book records**: Gives you the capability of merging the metadata and formats of two or more book records. You can choose to either delete or keep the records that were not clicked first.
+    #. **Edit metadata individually**: Allows you to edit the metadata of books one-by-one with the option of fetching metadata, including covers, from the Internet. It also allows you to add or remove particular e-book formats from a book.
+    #. **Edit metadata in bulk**: Allows you to edit common metadata fields for large numbers of books simultaneously. It operates on all the books you have selected in the :ref:`Library view <search_sort>`.
+    #. **Download metadata and covers**: Downloads metadata and covers (if available) for the books that are selected in the book list.
+    #. **Copy metadata**: Copy metadata for the current book onto the system clipboard
+    #. **Paste metadata**: Paste metadata from the system clipboard onto the currently selected books
+    #. **Merge book records**: Gives you the capability of merging the metadata and formats of two or more book records. You can choose to either delete or keep the records that were not clicked first.
+    #. **Manage data files**: Manage the extra data files associated with the selected books.
 
 For more details, see :ref:`metadata`.
 
@@ -270,8 +277,10 @@ Remove books
 
     6. **Remove matching books from device**: Allows you to remove e-book files from a connected device that match the books that are selected in the book list.
 
+    7. **Restore recently deleted**: Allows you to undo the removal of books or formats.
+
 .. note::
-    Note that when you use :guilabel:`Remove books` to delete books from your calibre library, the book record is permanently deleted, but the files are placed into the :guilabel:`Recycle Bin/Trash`. This allows you to recover the files if you change your mind.
+    Note that when you use :guilabel:`Remove books` to delete books from your calibre library, the book record is deleted, but the books are temporarily stored, for a few days, in a trash folder. You can undo the delete by right clicking the :guilabel:`Remove books` button and choosing to :guilabel:`Restore recently deleted` books.
 
 .. _configuration:
 
@@ -311,7 +320,10 @@ Search & sort
 
 The Search & Sort section allows you to perform several powerful actions on your book collections.
 
-    * You can sort them by title, author, date, rating, etc. by clicking on the column titles. You can also sub-sort, i.e. sort on multiple columns. For example, if you click on the title column and then the author column, the book will be sorted by author and then all the entries for the same author will be sorted by title.
+    * You can sort them by title, author, date, rating, etc. by clicking on the column titles.
+      You can also sub-sort, i.e. sort on multiple columns.
+      For example, if you click on the title column and then the author column, the book will be sorted by
+      author and then all the entries for the same author will be sorted by title.
 
     * You can search for a particular book or set of books using the Search bar. More on that below.
 
@@ -324,6 +336,9 @@ The Search & Sort section allows you to perform several powerful actions on your
         - Keep the :kbd:`Shift` key pressed and click on the starting and ending book of a range of books you want selected.
 
     * You can configure which fields you want displayed by using the :ref:`configuration` dialog.
+
+    * To perform complex multiple column based sub-sorting add the :guilabel:`Sort by`
+      tool to a toolbar via :guilabel:`Preferences->Toolbars & menus`.
 
 .. _search_interface:
 
@@ -372,7 +387,7 @@ You can set only one of the search options `Case sensitive searching` and `Unacc
 Equality searches are indicated by prefixing the search string with an equals sign (=). For example, the query
 ``tag:"=science"`` will match `science`, but not `science fiction` or `hard science`. Character variants are significant: `é` doesn't match `e`.
 
-Two variants of equality searches are used for hierarchical items (e.g., A.B.C): hierarchical prefix searches and hierarchical component searches. The first, indicated by a single period after the equals (``=.``) matches the initial parts of a hierarchical item. The second, indicated by two periods after the the equals (``=..``) matches an internal name in the hierarchical item. Examples, using the tag ``History.Military.WWII`` as the value:
+Two variants of equality searches are used for hierarchical items (e.g., A.B.C): hierarchical prefix searches and hierarchical component searches. The first, indicated by a single period after the equals (``=.``) matches the initial parts of a hierarchical item. The second, indicated by two periods after the equals (``=..``) matches an internal name in the hierarchical item. Examples, using the tag ``History.Military.WWII`` as the value:
 
   * ``tags:"=.History"`` : True. ``History`` is a prefix of the tag.
   * ``tags:"=.History.Military"`` : True. ``History.Military`` is a prefix of the tag.
@@ -451,14 +466,21 @@ The syntax for searching for dates is::
 If the date is ambiguous then the current locale is used for date comparison. For example, in an mm/dd/yyyy
 locale 2/1/2009 is interpreted as 1 Feb 2009. In a dd/mm/yyyy locale it is interpreted as 2 Jan 2009.  Some
 special date strings are available. The string ``today`` translates to today's date, whatever it is. The
-strings ``yesterday`` and ``thismonth`` (or the translated equivalent in the current language) also work.
-In addition, the string ``daysago`` (also translated) can be used to compare to a date some number of days ago.
-For example::
+strings ``yesterday``, ``thismonth``, ``lastmonth``, ``thisyear`` and ``lastyear`` (or the translated equivalent in
+the current language) also work. In addition, the strings ``daysago``, ``monthsago`` and ``yearsago`` (also
+translated) can be used to compare to a date some number of days, months or years ago. Searches using
+``thismonth``, ``lastmonth`` and ``monthsago`` compare only the year and month, while those using ``thisyear``,
+``lastyear`` and ``yearsago`` compare only the year. For example::
 
     date:>10daysago
     date:<=45daysago
+    pubdate:lastmonth Will find all books published last month
+    date:>=3monthsago Will find all books added to calibre in the last three calendar months, including this month
+    pubdate:<10yearsago Will find all books published before the year ten years ago
 
-To avoid potential problems with translated strings when using a non-English version of calibre, the strings ``_today``, ``_yesterday``, ``_thismonth``, and ``_daysago`` are always available. They are not translated.
+To avoid potential problems with translated strings when using a non-English version of calibre, the strings
+``_today``, ``_yesterday``, ``_thismonth``, ``_lastmonth``, ``_thisyear``, ``_lastyear``, ``_daysago``,
+``_monthsago`` and ``_yearsago`` are always available. They are not translated.
 
 *Searching dates and numeric values with relational comparisons*
 
@@ -489,11 +511,11 @@ search. More about saving searches below.
 
 *Virtual libraries*
 
-The special field ``vl`` is used to search for books in a virtual library. For
-example, ``vl:Read`` will find all the books in the *Read* virtual library. The search
+The special field ``vl`` is used to search for books in a Virtual library. For
+example, ``vl:Read`` will find all the books in the *Read* Virtual library. The search
 ``vl:Read and vl:"Science Fiction"`` will find all the books that are in both the *Read* and
 *Science Fiction* virtual libraries. The value following ``vl:`` must be the name of a
-virtual library. If the virtual library name contains spaces then surround it with quotes.
+Virtual library. If the Virtual library name contains spaces then surround it with quotes.
 
 *Whether a field has a value*
 
@@ -611,7 +633,7 @@ learn how to create and use Virtual libraries, see the tutorial:
 Temporarily marking books
 ----------------------------
 
-You can temporarily mark arbitrary sets of books. Marked books will have a pin on them and can be found with the search ``marked:true``. To mark a book press :kbd:`Ctrl+m` or go to :guilabel:`Preferences->Toolbars & menus` and add the :guilabel:`Mark books` button to the main toolbar.
+You can temporarily mark arbitrary sets of books. Marked books will have a pin on them and can be found with the search ``marked:true``. To mark a book press :kbd:`Ctrl+M` or go to :guilabel:`Preferences->Toolbars & menus` and add the :guilabel:`Mark books` button to the main toolbar.
 
 You can mark books with a specific text label by right clicking the :guilabel:`Mark books` button and choosing :guilabel:`Mark books with text label`. Books marked with text labels can later be found using the search ``marked:"=the-text-you-entered"``.
 
@@ -714,6 +736,49 @@ You can easily find any item in the Tag browser by clicking the search button at
 
 You can control how items are sorted in the Tag browser via the :guilabel:`Configure` button at the lower-left of the Tag browser. You can choose to sort by name, average rating or popularity (popularity is the number of books with an item in your library; for example, the popularity of Isaac Asimov is the number of books in your library by Isaac Asimov).
 
+You can use your own icons for categories and values in categories. To change the icon for a category,
+right-click on the category (the outer-level item) and choose `Change (category name) category icon`. A dialog will open where you can pick an image to be used as the icon. To restore the icon to its default choose `Restore (category name) default icon`.
+
+To choose icons for values in categories, right-click on a value then choose `Manage icon for (value name)`. You will see a list of choices:
+
+* `Choose an icon for this value but not its children`. A dialog will open where you choose an icon for the value. Children of that value will not inherit that icon.
+* `Choose an icon for this value and its children`. A dialog will open where you choose an icon for the value. Any children that don't have their own specified icon will inherit this icon.
+* `Use the existing icon for this value but not its children`. This option is offered if the value already has an icon that is inherited by the value's children. Selecting it will make the icon apply to the value but not its children.
+* `Use the existing icon for this value and its children`. This option is offered if the value already has an icon that is not inherited by the value's children. Selecting it will make the icon apply to the value and its children.
+* `Use the default icon for this value`. This option is offered if the item has an icon. It removes the icon from the value and any children inheriting the icon. The default icon is what is specified below.
+* `Reset all value icons to the default icon`. This option removes all item value icons for the category. It does not remove a template if one exists. There is no undo.
+* `Use/edit a template to choose the default value icon`. This option permits you to provide a calibre template that returns the name of an icon file to be used as a default icon. The template can use the following variables:
+
+  * ``category``: the lookup name of the category, for example ``authors``, ``series``, ``#mycolumn``.
+  * ``value``: the value of the item within the category.
+  * ``count``: the number of books with this value. If the value is part of a hierarchy then the count includes the children.
+  * ``avg_rating``: the average rating for books with this value. If the value is part of a hierarchy then the average includes the children.
+
+  Book metadata such as title is not available. Template database functions such as :ref:`ff_book_count` and :ref:`ff_book_values` will work, but the performance might not be acceptable. The following template functions will work in the GUI but won't work in the content server: :ref:`ff_connected_device_name`, :ref:`ff_connected_device_uuid`, :ref:`ff_current_virtual_library_name`, :ref:`ff_is_marked`, and :ref:`ff_virtual_libraries`.
+
+  In the GUI, Python templates have full access to the calibre database. In the content server, Python templates have access to new API (see `API documentation for the database interface <https://manual.calibre-ebook.com/db_api.html>`_) but not the old API (LibraryDatabase).
+
+  For example, this template specifies that any value in the clicked-on category beginning with `History` will have an icon named ``flower.png``::
+
+    program:
+      if substr($value, 0, 7) == 'History' then 'flower.png' fi
+
+  If a template returns the empty string (``''``) then the category icon will be used. If the template
+  returns a file name that doesn't exist then no icon is displayed.
+
+* `Use the category icon as the default`. This option specifies that the icon used for the category should be used for any value that doesn't otherwise have an icon. Selecting this option removes any template icon specification.
+
+
+The icon is chosen using the following hierarchy:
+
+#. The icon specified for the value, if it exists.
+#. The icon specified for a parent node found by walking up the tree, if one exists.
+#. The icon from a template, if a template exists and it returns a non-empty string.
+#. The default category icon, which always exists.
+
+Icons are per-user, not per-library, stored in the calibre configuration folder. Icons for item values are stored in the :file:`tb_icons` subfolder. Icons used by templates are in the :file:`template_icons` subfolder of :file:`tb_icons`.
+
+
 .. raw:: html epub
 
     <div style="clear:both"></div>
@@ -733,6 +798,21 @@ the background of the :guilabel:`Cover grid` via
 calibre display any specified field under the covers, such as title or authors
 or rating or a custom column of your own devising.
 
+
+Bookshelf view
+--------------------
+
+.. image:: images/bookshelf.png
+    :align: center
+
+You can have calibre display your book collection in shelves, optionally grouped
+by authors/date/rating etc.
+The :guilabel:`Bookshelf view` is activated by clicking the :guilabel:`Layout` button in the bottom
+right corner of the main calibre window. You can customize everything about the
+view from the background, to the text on the spines, the fonts, et cetera via
+:guilabel:`Preferences->Interface->Look & feel->Bookshelf`.
+
+
 Cover browser
 ---------------
 
@@ -740,15 +820,40 @@ Cover browser
     :align: center
 
 In addition to the :guilabel:`Cover grid` described above, you can also have calibre display
-covers in the single row. This is activated via the :guilabel:`Layout` button in the lower right
+covers in a single row. This is activated via the :guilabel:`Layout` button in the lower right
 corner of the main window. In :guilabel:`Preferences->Interface->Look & feel->Cover
 browser` you can change the number of covers displayed, and even have the
 :guilabel:`Cover browser` display itself in a separate popup window.
 
+Adding notes for authors, series, etc.
+------------------------------------------
+
+.. image:: images/notes.png
+   :class: float-left-img
+
+You can add notes for an author/series/tag/publisher/etc. to your calibre
+library. To do so right click on the author name in the :guilabel:`Tag browser` on the left
+or the :guilabel:`Book details` panel on the right and choose :guilabel:`Create note`
+or :guilabel:`Edit note`.
+
+A simple popup window will allow you to enter your notes using basic
+formatting and supporting links and images. Once a note for an author is
+created, it can be viewed easily from the :guilabel:`Book details` panel by
+clicking the little pencil icon next to the author name.
+
+You can search through all the notes in your library using the
+:guilabel:`Browse notes` tool by pressing :kbd:`Ctrl+Shift+N` or adding
+it to the toolbar via :guilabel:`Preferences->Toolbars & menus`.
+
+.. raw:: html epub
+
+    <div style="clear:both"></div>
+
+
 Quickview
 ----------
 
-Sometimes you want to select a book and quickly get a list of books with the same value in some category (authors, tags, publisher, series, etc.) as the currently selected book, but without changing the current view of the library. You can do this with Quickview. Quickview opens either a second window or a panel in the book list showing the list of books matching the value of interest. For example, assume you want to see a list of all the books with the one or more of the authors of the currently-selected book. Click in the author cell you are interested in and press the 'Q' key or click the :guilabel:`Quickview` icon in the :guilabel:`Layout` section of the calibre window. A window or panel will open with all the authors for that book on the left, and all the books by the selected author on the right.
+Sometimes you want to select a book and quickly get a list of books with the same value in some category (authors, tags, publisher, series, etc.) as the currently selected book, but without changing the current view of the library. You can do this with Quickview. Quickview opens either a second window or a panel in the book list showing the list of books matching the value of interest. For example, assume you want to see a list of all the books with one or more of the authors of the currently-selected book. Click in the author cell you are interested in and press the 'Q' key or click the :guilabel:`Quickview` icon in the :guilabel:`Layout` section of the calibre window. A window or panel will open with all the authors for that book on the left, and all the books by the selected author on the right.
 
 Some example Quickview usages: quickly seeing what other books:
 	- have some tag(s) applied to the currently selected book,
@@ -764,13 +869,13 @@ There are two choices for where the Quickview information appears:
 
 You can move the window from docked to undocked as desired using the "Dock/Undock" button.
 
-The Quickview panel can be left open permanently, in which case it follows movements on the book list. For example, if you click in the calibre library view on a category column (tags, series, publisher, authors, etc.) for a book, the Quickview window contents will change to show you in the left-hand side panel the values in that category for the selected book (e.g., the tags for that book). The first item in that list will be selected, and Quickview will show you on the right-hand side panel all the books in your library that use that value. Click on an different value in the left-hand panel to see the books with that different value.
+The Quickview panel can be left open permanently, in which case it follows movements on the book list. For example, if you click in the calibre library view on a category column (tags, series, publisher, authors, etc.) for a book, the Quickview window contents will change to show you in the left-hand side panel the values in that category for the selected book (e.g., the tags for that book). The first item in that list will be selected, and Quickview will show you on the right-hand side panel all the books in your library that use that value. Click on a different value in the left-hand panel to see the books with that different value.
 
 Double-click on a book in the Quickview window to select that book in the library view. This will also change the items display in the QuickView window (the left-hand panel) to show the items in the newly-selected book.
 
 :kbd:`Shift-` or :kbd:`Ctrl-` double-click on a book in the Quickview window to open the edit metadata dialog on that book in the calibre window. The edited book will be Quickview'ed when you close the edit metadata dialog.
 
-You can see if a column can be Quickview'ed by hovering your mouse over the column heading and looking at the tooltip for that heading. You can also know by right-clicking on the column heading to see of the "Quickview" option is shown in the menu, in which case choosing that Quickview option is equivalent to pressing 'Q' in the current cell.
+You can see if a column can be Quickview'ed by hovering your mouse over the column heading and looking at the tooltip for that heading. You can also know by right-clicking on the column heading to see if the "Quickview" option is shown in the menu, in which case choosing that Quickview option is equivalent to pressing 'Q' in the current cell.
 
 Options (in :guilabel:`Preferences->Look & feel->Quickview`):
 
@@ -800,7 +905,7 @@ The Jobs panel shows the number of currently running jobs. Jobs are tasks that r
 Keyboard shortcuts
 ---------------------
 
-calibre has several keyboard shortcuts to save you time and mouse movement. These shortcuts are active in the book list view (when you're not editing the details of a particular book), and most of them affect the title you have selected. The calibre E-book viewer has its own shortcuts which can be customised by clicking the :guilabel:`Preferences` button in the viewer.
+calibre has several keyboard shortcuts to save you time and mouse movement. These shortcuts are active in the book list view (when you're not editing the details of a particular book), and most of them affect the title you have selected. The calibre E-book viewer :ref:`has its own shortcuts <viewer_shortcuts>` which can be customised in the viewer :guilabel:`Preferences`.
 
 .. note::
 
@@ -848,6 +953,8 @@ calibre has several keyboard shortcuts to save you time and mouse movement. Thes
       - View
     * - :kbd:`Shift+V`
       - View last read book
+    * - :kbd:`Ctrl+Alt+A`
+      - Ask AI about the currently selected books
     * - :kbd:`Alt+V/Cmd+V for macOS`
       - View specific format
     * - :kbd:`Alt+Shift+J`
@@ -860,6 +967,8 @@ calibre has several keyboard shortcuts to save you time and mouse movement. Thes
       - Toggle Tag browser
     * - :kbd:`Alt+Shift+G`
       - Toggle Cover grid
+    * - :kbd:`Alt+Shift+H`
+      - Toggle Bookshelf
     * - :kbd:`Alt+A`
       - Show books by the same author as the current book
     * - :kbd:`Alt+T`
@@ -884,9 +993,9 @@ calibre has several keyboard shortcuts to save you time and mouse movement. Thes
       - Clear the additional restriction
     * - :kbd:`Ctrl+*`
       - Create a temporary Virtual library based on the current search
-    * - :kbd:`Ctrl+Right`
+    * - :kbd:`Ctrl+Tab`
       - Select the next Virtual library tab
-    * - :kbd:`Ctrl+Left`
+    * - :kbd:`Ctrl+Shift+Tab`
       - Select the previous Virtual library tab
     * - :kbd:`N or F3`
       - Find the next book that matches the current search (only works if search highlighting is turned on in search preferences)
@@ -919,3 +1028,13 @@ calibre has several keyboard shortcuts to save you time and mouse movement. Thes
     * - :kbd:`Ctrl+Alt+Shift+F`
       - Restrict the displayed books to only those books that are in a category
         currently displayed in the :guilabel:`Tag browser`
+    * - :kbd:`B`
+      - Browse annotations (highlights and bookmarks) made in the calibre E-book viewer for all books in the library
+    * - :kbd:`Ctrl+Shift+N`
+      - Browse notes associated with authors/series/tags/etc.
+    * - :kbd:`Alt+Shift+L`
+      - Toggle the layout between wide and narrow views
+    * - :kbd:`Ctrl+Alt+P`
+      - Switch to previous library, if any
+    * - :kbd:`Ctrl+Alt+Shift+P`
+      - Switch to previous virtual library, if any

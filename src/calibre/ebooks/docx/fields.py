@@ -1,17 +1,12 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import re
 
-from calibre.ebooks.docx.index import process_index, polish_index_markup
-from polyglot.builtins import iteritems, native_string_type
+from calibre.ebooks.docx.index import polish_index_markup, process_index
 
 
 class Field:
-
     def __init__(self, start):
         self.start = start
         self.end = None
@@ -41,12 +36,18 @@ class Field:
 
 
 WORD, FLAG = 0, 1
-scanner = re.Scanner([
-    (r'\\\S{1}', lambda s, t: (t, FLAG)),  # A flag of the form \x
-    (r'"[^"]*"', lambda s, t: (t[1:-1], WORD)),  # Quoted word
-    (r'[^\s\\"]\S*', lambda s, t: (t, WORD)),  # A non-quoted word, must not start with a backslash or a space or a quote
-    (r'\s+', None),
-], flags=re.DOTALL)
+scanner = re.Scanner(  # type: ignore
+    [
+        (r'\\\S{1}', lambda s, t: (t, FLAG)),  # A flag of the form \x
+        (r'"[^"]*"', lambda s, t: (t[1:-1], WORD)),  # Quoted word
+        (
+            r'[^\s\\"]\S*',
+            lambda s, t: (t, WORD),
+        ),  # A non-quoted word, must not start with a backslash or a space or a quote
+        (r'\s+', None),
+    ],
+    flags=re.DOTALL,
+)
 
 null = object()
 
@@ -74,49 +75,50 @@ def parser(name, field_map, default_field_name=None):
         ans.pop(null, None)
         return ans
 
-    parse.__name__ = native_string_type('parse_' + name)
+    parse.__name__ = str('parse_' + name)
 
     return parse
 
 
-parse_hyperlink = parser('hyperlink',
-    'l:anchor m:image-map n:target o:title t:target', 'url')
+parse_hyperlink = parser('hyperlink', 'l:anchor m:image-map n:target o:title t:target', 'url')
 
-parse_xe = parser('xe',
-    'b:bold i:italic f:entry-type r:page-range-bookmark t:page-number-text y:yomi', 'text')
+parse_xe = parser('xe', 'b:bold i:italic f:entry-type r:page-range-bookmark t:page-number-text y:yomi', 'text')
 
-parse_index = parser('index',
+parse_index = parser(
+    'index',
     'b:bookmark c:columns-per-page d:sequence-separator e:first-page-number-separator'
     ' f:entry-type g:page-range-separator h:heading k:crossref-separator'
-    ' l:page-number-separator p:letter-range s:sequence-name r:run-together y:yomi z:langcode')
+    ' l:page-number-separator p:letter-range s:sequence-name r:run-together y:yomi z:langcode',
+)
 
-parse_ref = parser('ref',
-    'd:separator f:footnote h:hyperlink n:number p:position r:relative-number t:suppress w:number-full-context')
+parse_ref = parser('ref', 'd:separator f:footnote h:hyperlink n:number p:position r:relative-number t:suppress w:number-full-context')
 
-parse_noteref = parser('noteref',
-                   'f:footnote h:hyperlink p:position')
+parse_noteref = parser('noteref', 'f:footnote h:hyperlink p:position')
 
 
 class Fields:
-
     def __init__(self, namespace):
         self.namespace = namespace
         self.fields = []
         self.index_bookmark_counter = 0
         self.index_bookmark_prefix = 'index-'
+        self.hyperlink_fields: list = []
+        self.xe_fields: list = []
+        self.index_fields: list = []
 
     def __call__(self, doc, log):
         all_ids = frozenset(self.namespace.XPath('//*/@w:id')(doc))
         c = 0
         while self.index_bookmark_prefix in all_ids:
             c += 1
-            self.index_bookmark_prefix = self.index_bookmark_prefix.replace('-', '%d-' % c)
+            self.index_bookmark_prefix = self.index_bookmark_prefix.replace('-', f'{c}-')
         stack = []
         for elem in self.namespace.XPath(
             '//*[name()="w:p" or name()="w:r" or'
             ' name()="w:instrText" or'
             ' (name()="w:fldChar" and (@w:fldCharType="begin" or @w:fldCharType="end") or'
-            ' name()="w:fldSimple")]')(doc):
+            ' name()="w:fldSimple")]'
+        )(doc):
             if elem.tag.endswith('}fldChar'):
                 typ = self.namespace.get(elem, 'w:fldCharType')
                 if typ == 'begin':
@@ -138,18 +140,17 @@ class Fields:
                     self.fields.append(field)
                     for r in self.namespace.XPath('descendant::w:r')(elem):
                         field.contents.append(r)
-            else:
-                if stack:
-                    stack[-1].contents.append(elem)
+            elif stack:
+                stack[-1].contents.append(elem)
 
         field_types = ('hyperlink', 'xe', 'index', 'ref', 'noteref')
-        parsers = {x.upper():getattr(self, 'parse_'+x) for x in field_types}
-        parsers.update({x:getattr(self, 'parse_'+x) for x in field_types})
-        field_parsers = {f.upper():globals()['parse_%s' % f] for f in field_types}
-        field_parsers.update({f:globals()['parse_%s' % f] for f in field_types})
+        parsers = {x.upper(): getattr(self, 'parse_' + x) for x in field_types}
+        parsers.update({x: getattr(self, 'parse_' + x) for x in field_types})
+        field_parsers = {f.upper(): globals()[f'parse_{f}'] for f in field_types}
+        field_parsers.update({f: globals()[f'parse_{f}'] for f in field_types})
 
         for f in field_types:
-            setattr(self, '%s_fields' % f, [])
+            setattr(self, f'{f}_fields', [])
         unknown_fields = {'TOC', 'toc', 'PAGEREF', 'pageref'}  # The TOC and PAGEREF fields are handled separately
 
         for field in self.fields:
@@ -159,7 +160,7 @@ class Fields:
                 if func is not None:
                     func(field, field_parsers[field.name], log)
                 elif field.name not in unknown_fields:
-                    log.warn('Encountered unknown field: %s, ignoring it.' % field.name)
+                    log.warn(f'Encountered unknown field: {field.name}, ignoring it.')
                     unknown_fields.add(field.name)
 
     def get_runs(self, field):
@@ -192,7 +193,7 @@ class Fields:
         dest = ref.get(None, None)
         if dest is not None and 'hyperlink' in ref:
             for runs in self.get_runs(field):
-                self.hyperlink_fields.append(({'anchor':dest}, runs))
+                self.hyperlink_fields.append(({'anchor': dest}, runs))
         else:
             log.warn(f'Unsupported reference field ({field.name}), ignoring: {ref!r}')
 
@@ -208,8 +209,9 @@ class Fields:
             # can link to it later
             def WORD(x):
                 return self.namespace.expand('w:' + x)
+
             self.index_bookmark_counter += 1
-            bmark = xe['anchor'] = '%s%d' % (self.index_bookmark_prefix, self.index_bookmark_counter)
+            bmark = xe['anchor'] = f'{self.index_bookmark_prefix}{self.index_bookmark_counter}'
             p = field.start.getparent()
             bm = p.makeelement(WORD('bookmarkStart'))
             bm.set(WORD('id'), bmark), bm.set(WORD('name'), bmark)
@@ -229,14 +231,14 @@ class Fields:
         if not blocks:
             return
         for anchor, run in hyperlinks:
-            self.hyperlink_fields.append(({'anchor':anchor}, [run]))
+            self.hyperlink_fields.append(({'anchor': anchor}, [run]))
 
         self.index_fields.append((idx, blocks))
 
     def polish_markup(self, object_map):
         if not self.index_fields:
             return
-        rmap = {v:k for k, v in iteritems(object_map)}
+        rmap = {v: k for k, v in object_map.items()}
         for idx, blocks in self.index_fields:
             polish_index_markup(idx, [rmap[b] for b in blocks])
 
@@ -245,25 +247,90 @@ def test_parse_fields(return_tests=False):
     import unittest
 
     class TestParseFields(unittest.TestCase):
-
         def test_hyperlink(self):
-            ae = lambda x, y: self.assertEqual(parse_hyperlink(x, None), y)
-            ae(r'\l anchor1', {'anchor':'anchor1'})
-            ae(r'www.calibre-ebook.com', {'url':'www.calibre-ebook.com'})
-            ae(r'www.calibre-ebook.com \t target \o tt', {'url':'www.calibre-ebook.com', 'target':'target', 'title': 'tt'})
+            def ae(x, y):
+                return self.assertEqual(parse_hyperlink(x, None), y)
+
+            ae(r'\l anchor1', {'anchor': 'anchor1'})
+            ae(r'www.calibre-ebook.com', {'url': 'www.calibre-ebook.com'})
+            ae(
+                r'www.calibre-ebook.com \t target \o tt',
+                {'url': 'www.calibre-ebook.com', 'target': 'target', 'title': 'tt'},
+            )
             ae(r'"c:\\Some Folder"', {'url': 'c:\\Some Folder'})
             ae(r'xxxx \y yyyy', {'url': 'xxxx'})
 
         def test_xe(self):
-            ae = lambda x, y: self.assertEqual(parse_xe(x, None), y)
-            ae(r'"some name"', {'text':'some name'})
-            ae(r'name \b \i', {'text':'name', 'bold':None, 'italic':None})
-            ae(r'xxx \y a', {'text':'xxx', 'yomi':'a'})
+            def ae(x, y):
+                return self.assertEqual(parse_xe(x, None), y)
+
+            ae(r'"some name"', {'text': 'some name'})
+            ae(r'name \b \i', {'text': 'name', 'bold': None, 'italic': None})
+            ae(r'xxx \y a', {'text': 'xxx', 'yomi': 'a'})
 
         def test_index(self):
-            ae = lambda x, y: self.assertEqual(parse_index(x, None), y)
+            def ae(x, y):
+                return self.assertEqual(parse_index(x, None), y)
+
             ae(r'', {})
-            ae(r'\b \c 1', {'bookmark':None, 'columns-per-page': '1'})
+            ae(r'\b \c 1', {'bookmark': None, 'columns-per-page': '1'})
+
+        def test_polish_index_markup(self):
+            from lxml import html
+
+            entries = ('A:Ab', 'A:Dogs', 'A:Dogs', 'A:Y:Ab')
+            body = html.fromstring('<div>' + ''.join(f'<p><a href="#{i}">{t}</a></p>' for i, t in enumerate(entries)) + '</div>')
+            # Blocks are passed in reverse order
+            polish_index_markup(None, list(body)[::-1])
+            self.assertEqual(len(body), 1, 'blocks for the same top level entry not merged')
+
+            def entry_for_link(a):
+                # The text of the entry a link is under and of its parent entries
+                span = a.getparent()
+                level = float(span.get('style').rpartition(' ')[2][:-2])
+                ans = [a.text]
+                for s in span.itersiblings(preceding=True):
+                    slevel = float(s.get('style').rpartition(' ')[2][:-2])
+                    if slevel < level:
+                        ans.insert(0, s.text)
+                        level = slevel
+                return ':'.join(ans)
+
+            self.assertEqual({a.get('href'): entry_for_link(a) for a in body.iter('a')}, {f'#{i}': t for i, t in enumerate(entries)})
+            self.assertEqual([s.text for s in body[0]], ['A', None, None, 'Y', None])
+            # Each entry ends with a line break, with references to the same entry on one line
+            self.assertEqual([s[-1].tag for s in body[0]], ['br'] * 5)
+            self.assertEqual(len(body[0][2].xpath('descendant::br')), 1)
+
+        def test_polish_index_markup_edge_cases(self):
+            from lxml import html
+
+            def polish(*entries):
+                # entries are (entry text, extra markup after the link), in sorted order
+                body = html.fromstring('<div>' + ''.join(f'<p><a href="#{i}">{t}</a>{extra}</p>' for i, (t, extra) in enumerate(entries)) + '</div>')
+                polish_index_markup(None, list(body)[::-1])
+                self.assertEqual({a.get('href') for a in body.iter('a')}, {f'#{i}' for i in range(len(entries))}, 'links lost')
+                return body
+
+            # Entry with a trailing colon has no sub-entries
+            body = polish(('B:x', ''), ('B:', ''))
+            self.assertEqual(len(body), 1)
+            self.assertEqual([s.text_content() for s in body[0]], ['B', 'x'])
+            # Page number text stays with its link
+            body = polish(('C', '<span> [See D]</span>'), ('C', '<span> [See E]</span>'), ('D', ''))
+            self.assertEqual(len(body), 2)
+            self.assertEqual([s.text_content() for s in body[0]], ['C [See D], C [See E]'])
+            # Sub-entries still match an entry that has page number text
+            body = polish(('A:Dogs', '<span> [See Cats]</span>'), ('A:Dogs:X', ''))
+            self.assertEqual(len(body), 1)
+            self.assertEqual([s.text_content() for s in body[0]], ['A', 'Dogs [See Cats]', 'X'])
+            # Entries with no text other than colons
+            body = polish((':', ''), (':', ''), ('Z', ''))
+            self.assertEqual(len(body), 2)
+            # Blocks without links are left alone
+            body = html.fromstring('<div><p>X</p><p><a href="#1">X</a></p></div>')
+            polish_index_markup(None, list(body)[::-1])
+            self.assertEqual(len(body), 2)
 
     suite = unittest.TestLoader().loadTestsFromTestCase(TestParseFields)
     if return_tests:

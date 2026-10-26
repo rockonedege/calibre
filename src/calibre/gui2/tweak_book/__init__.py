@@ -1,14 +1,11 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import string
-from polyglot.builtins import iteritems
 
-from calibre.utils.config import JSONConfig
 from calibre.spell.dictionary import Dictionaries, parse_lang_code
+from calibre.utils.config import JSONConfig
+from calibre.utils.localization import _
 
 CONTAINER_DND_MIMETYPE = 'application/x-calibre-container-name-list'
 tprefs = JSONConfig('tweak_book_gui')
@@ -19,11 +16,12 @@ d['editor_font_family'] = None
 d['editor_font_size'] = 12
 d['editor_line_wrap'] = True
 d['editor_tab_stop_width'] = 2
+d['editor_cursor_width'] = 1
 d['editor_show_char_under_cursor'] = True
 d['replace_entities_as_typed'] = True
 d['preview_refresh_time'] = 2
 d['choose_tweak_fmt'] = True
-d['tweak_fmt_order'] = ['EPUB', 'AZW3']
+d['tweak_fmt_order'] = ['EPUB', 'KEPUB', 'AZW3']
 d['update_metadata_from_calibre'] = True
 d['nestable_dock_widgets'] = False
 d['dock_top_left'] = 'horizontal'
@@ -42,12 +40,18 @@ d['preview_background'] = 'auto'
 d['preview_foreground'] = 'auto'
 d['preview_link_color'] = 'auto'
 d['remove_existing_links_when_linking_sheets'] = True
-d['charmap_favorites'] = list(map(ord, '\xa0\u2002\u2003\u2009\xad' '‘’“”‹›«»‚„' '—–§¶†‡©®™' '→⇒•·°±−×÷¼½½¾' '…µ¢£€¿¡¨´¸ˆ˜' 'ÀÁÂÃÄÅÆÇÈÉÊË' 'ÌÍÎÏÐÑÒÓÔÕÖØ' 'ŒŠÙÚÛÜÝŸÞßàá' 'âãäåæçèéêëìí' 'îïðñòóôõöøœš' 'ùúûüýÿþªºαΩ∞'))  # noqa
-d['folders_for_types'] = {'style':'styles', 'image':'images', 'font':'fonts', 'audio':'audio', 'video':'video'}
+d['charmap_favorites'] = list(
+    map(
+        ord,
+        ('\xa0\u2002\u2003\u2009\xad‘’“”‹›«»‚„—–§¶†‡©®™→⇒•·°±−×÷¼½½¾…µ¢£€¿¡¨´¸ˆ˜ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØŒŠÙÚÛÜÝŸÞßàáâãäåæçèéêëìíîïðñòóôõöøœšùúûüýÿþªºαΩ∞'),
+    )
+)
+d['folders_for_types'] = {'style': 'styles', 'image': 'images', 'font': 'fonts', 'audio': 'audio', 'video': 'video'}
 d['pretty_print_on_open'] = False
 d['disable_completion_popup_for_search'] = False
 d['saved_searches'] = []
 d['insert_tag_mru'] = ['p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'em', 'strong', 'td', 'tr']
+d['manage_tag_list_collapsed_tags'] = []
 d['spell_check_case_sensitive_sort'] = False
 d['inline_spell_check'] = True
 d['custom_themes'] = {}
@@ -57,20 +61,58 @@ d['merge_identical_selectors'] = False
 d['merge_rules_with_identical_properties'] = False
 d['remove_unreferenced_sheets'] = True
 d['global_book_toolbar'] = [
-'new-file', 'open-book',  'save-book', None, 'global-undo', 'global-redo', 'create-checkpoint', None, 'donate', 'user-manual']
+    'new-file',
+    'open-book',
+    'save-book',
+    None,
+    'global-undo',
+    'global-redo',
+    'create-checkpoint',
+    None,
+    'donate',
+    'user-manual',
+]
 d['global_tools_toolbar'] = [
-    'check-book', 'spell-check-book', 'edit-toc', 'insert-character',
-    'manage-fonts', 'smarten-punctuation', 'remove-unused-css', 'show-reports'
+    'check-book',
+    'spell-check-book',
+    'edit-toc',
+    'insert-character',
+    'manage-fonts',
+    'smarten-punctuation',
+    'remove-unused-css',
+    'show-reports',
 ]
 d['global_plugins_toolbar'] = []
 d['editor_common_toolbar'] = [('editor-' + x) if x else None for x in ('undo', 'redo', None, 'cut', 'copy', 'paste', 'smart-comment')]
 d['editor_css_toolbar'] = ['pretty-current', 'editor-sort-css', 'insert-image']
 d['editor_xml_toolbar'] = ['pretty-current', 'insert-tag']
-d['editor_html_toolbar'] = ['fix-html-current', 'pretty-current', 'insert-image', 'insert-hyperlink', 'insert-tag', 'change-paragraph']
-d['editor_format_toolbar'] = [('format-text-' + x) if x else x for x in (
-'bold', 'italic', 'underline', 'strikethrough', 'subscript', 'superscript',
-    None, 'color', 'background-color', None, 'justify-left', 'justify-center',
-    'justify-right', 'justify-fill')]
+d['editor_html_toolbar'] = [
+    'fix-html-current',
+    'pretty-current',
+    'insert-image',
+    'insert-hyperlink',
+    'insert-tag',
+    'change-paragraph',
+]
+d['editor_format_toolbar'] = [
+    ('format-text-' + x) if x else x
+    for x in (
+        'bold',
+        'italic',
+        'underline',
+        'strikethrough',
+        'subscript',
+        'superscript',
+        None,
+        'color',
+        'background-color',
+        None,
+        'justify-left',
+        'justify-center',
+        'justify-right',
+        'justify-fill',
+    )
+]
 d['spell_check_case_sensitive_search'] = False
 d['add_cover_preserve_aspect_ratio'] = False
 d['templates'] = {}
@@ -85,9 +127,10 @@ d['auto_link_stylesheets'] = True
 d['check_external_link_anchors'] = True
 d['remove_ncx'] = True
 d['html_transform_scope'] = 'current'
+d['check_book_skipped_rules'] = {}
 del d
 
-ucase_map = {l:string.ascii_uppercase[i] for i, l in enumerate(string.ascii_lowercase)}
+ucase_map = {l: string.ascii_uppercase[i] for i, l in enumerate(string.ascii_lowercase)}
 
 
 def capitalize(x):
@@ -107,10 +150,9 @@ def set_current_container(container):
 
 
 class NonReplaceDict(dict):
-
     def __setitem__(self, k, v):
         if k in self:
-            raise ValueError('The key %s is already present' % k)
+            raise ValueError(f'The key {k} is already present')
         dict.__setitem__(self, k, v)
 
 
@@ -118,14 +160,18 @@ actions = NonReplaceDict()
 editors = NonReplaceDict()
 toolbar_actions = NonReplaceDict()
 editor_toolbar_actions = {
-    'format':NonReplaceDict(), 'html':NonReplaceDict(), 'xml':NonReplaceDict(), 'css':NonReplaceDict()}
+    'format': NonReplaceDict(),
+    'html': NonReplaceDict(),
+    'xml': NonReplaceDict(),
+    'css': NonReplaceDict(),
+}
 
 TOP = object()
 dictionaries = Dictionaries()
 
 
 def editor_name(editor):
-    for n, ed in iteritems(editors):
+    for n, ed in editors.items():
         if ed is editor:
             return n
 
@@ -139,6 +185,7 @@ def set_book_locale(lang):
     except ValueError:
         dictionaries.default_locale = dictionaries.ui_locale
     from calibre.gui2.tweak_book.editor.syntax.html import refresh_spell_check_status
+
     refresh_spell_check_status()
 
 

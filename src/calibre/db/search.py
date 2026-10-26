@@ -1,35 +1,41 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__   = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
-
-import regex, weakref, operator
+import operator
+import unicodedata
+import weakref
+from collections import OrderedDict, deque
+from collections.abc import Callable
+from datetime import datetime, timedelta
 from functools import partial
-from datetime import timedelta
-from collections import deque, OrderedDict
 
-from calibre.constants import preferred_encoding, DEBUG
+import regex
+
+from calibre.constants import DEBUG, preferred_encoding
 from calibre.db.utils import force_to_bool
 from calibre.utils.config_base import prefs
-from calibre.utils.date import parse_date, UNDEFINED_DATE, now, dt_as_local
-from calibre.utils.icu import primary_no_punc_contains, primary_contains, sort_key
-from calibre.utils.localization import lang_map, canonicalize_lang
-from calibre.utils.search_query_parser import SearchQueryParser, ParseException
-from polyglot.builtins import iteritems, string_or_bytes
+from calibre.utils.date import UNDEFINED_DATE, dt_as_local, local_tz, now, parse_date
+from calibre.utils.icu import ascii_primary_no_punc_matcher, primary_contains, primary_no_punc_contains, sort_key
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.localization import _, canonicalize_lang, lang_map
+from calibre.utils.search_query_parser import ParseException, SearchQueryParser
 
 CONTAINS_MATCH = 0
-EQUALS_MATCH   = 1
-REGEXP_MATCH   = 2
-ACCENT_MATCH   = 3
+EQUALS_MATCH = 1
+REGEXP_MATCH = 2
+ACCENT_MATCH = 3
+
+
+class TemplatesNotAllowed(ParseException):
+    pass
+
 
 # Utils {{{
 
 
 def _matchkind(query, case_sensitive=False):
     matchkind = CONTAINS_MATCH
-    if (len(query) > 1):
+    if len(query) > 1:
         if query.startswith('\\'):
             query = query[1:]
         elif query.startswith('='):
@@ -55,43 +61,61 @@ def _match(query, value, matchkind, use_primary_find_in_search=True, case_sensit
         internal_match_ok = True
     else:
         internal_match_ok = False
-    for t in value:
-        try:  # ignore regexp exceptions, required because search-ahead tries before typing is finished
-            if not case_sensitive:
-                t = icu_lower(t)
-            if (matchkind == EQUALS_MATCH):
-                if internal_match_ok:
-                    if query == t:
-                        return True
-                    return sq in [c.strip() for c in t.split('.') if c.strip()]
-                elif query[0] == '.':
-                    if t.startswith(query[1:]):
-                        ql = len(query) - 1
-                        if (len(t) == ql) or (t[ql:ql+1] == '.'):
-                            return True
-                elif query == t:
+    if matchkind == CONTAINS_MATCH and not case_sensitive and use_primary_find_in_search:
+        # This is the hot path when searching, so avoid the ICU functions,
+        # which are slow in larger libraries, for ASCII only text
+        ascii_matcher = ascii_primary_no_punc_matcher(query)
+        if ascii_matcher is None:
+            for t in value:
+                if primary_no_punc_contains(query, icu_lower(t)):
                     return True
-            elif matchkind == REGEXP_MATCH:
-                flags = regex.UNICODE | regex.VERSION1 | regex.FULLCASE | (0 if case_sensitive else regex.IGNORECASE)
+            return False
+        for t in value:
+            if ascii_matcher(t) if t.isascii() else primary_no_punc_contains(query, icu_lower(t)):
+                return True
+        return False
+    for t in value:
+        if not case_sensitive:
+            t = icu_lower(t)
+        if matchkind == EQUALS_MATCH:
+            if internal_match_ok:
+                if query == t:
+                    return True
+                return sq in (c.strip() for c in t.split('.') if c.strip())
+            elif query[0] == '.':
+                if t.startswith(query[1:]):
+                    ql = len(query) - 1
+                    if len(t) == ql or t[ql : ql + 1] == '.':
+                        return True
+            elif query == t:
+                return True
+        elif matchkind == REGEXP_MATCH:
+            flags = regex.UNICODE | regex.VERSION1 | regex.FULLCASE | (0 if case_sensitive else regex.IGNORECASE)
+            try:
                 if regex.search(query, t, flags) is not None:
                     return True
-            elif matchkind == ACCENT_MATCH:
-                if primary_contains(query, t):
-                    return True
-            elif matchkind == CONTAINS_MATCH:
-                if not case_sensitive and use_primary_find_in_search:
-                    if primary_no_punc_contains(query, t):
-                        return True
-                elif query in t:
-                    return True
-        except regex.error:
-            pass
+            except regex.error as e:
+                raise ParseException(_('Invalid regular expression: {!r} with error: {}').format(query, str(e)))
+        elif matchkind == ACCENT_MATCH:
+            if primary_contains(query, t):
+                return True
+        elif matchkind == CONTAINS_MATCH:
+            # The case insensitive primary match is handled by the fast path above
+            if query in t:
+                return True
     return False
+
+
 # }}}
 
 
-class DateSearch:  # {{{
+def months_ago(dt, num):
+    """Return the first day of the month that is num months before the month of dt"""
+    year, month = divmod(dt.year * 12 + dt.month - 1 - num, 12)
+    return dt.replace(year=year, month=month + 1, day=1)
 
+
+class DateSearch:  # {{{
     def __init__(self):
         self.operators = OrderedDict((
             ('!=', self.ne),
@@ -101,10 +125,32 @@ class DateSearch:  # {{{
             ('>', self.gt),
             ('<', self.lt),
         ))
-        self.local_today         = {'_today', 'today', icu_lower(_('today'))}
-        self.local_yesterday     = {'_yesterday', 'yesterday', icu_lower(_('yesterday'))}
-        self.local_thismonth     = {'_thismonth', 'thismonth', icu_lower(_('thismonth'))}
-        self.daysago_pat = regex.compile(r'(%s|daysago|_daysago)$'%_('daysago'), flags=regex.UNICODE | regex.VERSION1)
+        # NOTE: The following strings are keywords used in date searches, such
+        # as date:thismonth or date:>3daysago. Their translations must be
+        # single words without spaces.
+        self.local_today = {'_today', 'today', icu_lower(_('today'))}
+        self.local_yesterday = {'_yesterday', 'yesterday', icu_lower(_('yesterday'))}
+        self.local_thismonth = {'_thismonth', 'thismonth', icu_lower(_('thismonth'))}
+        self.local_lastmonth = {'_lastmonth', 'lastmonth', icu_lower(_('lastmonth'))}
+        self.local_thisyear = {'_thisyear', 'thisyear', icu_lower(_('thisyear'))}
+        self.local_lastyear = {'_lastyear', 'lastyear', icu_lower(_('lastyear'))}
+        self.ago_pats = tuple(
+            (regex.compile(rf'({regex.escape(local)}|{unit}|_{unit})$', flags=regex.UNICODE | regex.VERSION1), unit)
+            for local, unit in ((_('daysago'), 'daysago'), (_('monthsago'), 'monthsago'), (_('yearsago'), 'yearsago'))
+        )
+        # dateutil reads month.year and year.month as decimal numbers
+        self.dotted_month_year_pat = regex.compile(r'(?:\d{1,2}\.\d{4}|\d{4}\.\d{1,2})')
+
+    def specified_field_count(self, query):
+        # Parse with two defaults that differ in every field, any field that
+        # comes out the same in both was present in the query. The defaults
+        # are in leap years and in months with 31 days so that every valid
+        # day and month in the query can be combined with them.
+        a = parse_date(query, as_utc=False, default=datetime(2000, 1, 1, tzinfo=local_tz))
+        b = parse_date(query, as_utc=False, default=datetime(2004, 3, 2, tzinfo=local_tz))
+        if a.month != b.month:
+            return 1
+        return 2 if a.day != b.day else 3
 
     def eq(self, dbdate, query, field_count):
         if dbdate.year == query.year:
@@ -125,8 +171,7 @@ class DateSearch:  # {{{
         if field_count > 1 and dbdate.year == query.year:
             if dbdate.month > query.month:
                 return True
-            return (field_count == 3 and dbdate.month == query.month and
-                    dbdate.day > query.day)
+            return field_count == 3 and dbdate.month == query.month and dbdate.day > query.day
         return False
 
     def le(self, *args):
@@ -138,8 +183,7 @@ class DateSearch:  # {{{
         if field_count > 1 and dbdate.year == query.year:
             if dbdate.month < query.month:
                 return True
-            return (field_count == 3 and dbdate.month == query.month and
-                    dbdate.day < query.day)
+            return field_count == 3 and dbdate.month == query.month and dbdate.day < query.day
         return False
 
     def ge(self, *args):
@@ -170,9 +214,9 @@ class DateSearch:  # {{{
                     matches |= book_ids
             return matches
 
-        for k, relop in iteritems(self.operators):
+        for k, relop in self.operators.items():
             if query.startswith(k):
-                query = query[len(k):]
+                query = query[len(k) :]
                 break
         else:
             relop = self.operators['=']
@@ -186,37 +230,57 @@ class DateSearch:  # {{{
         elif query in self.local_thismonth:
             qd = now()
             field_count = 2
+        elif query in self.local_lastmonth:
+            qd = months_ago(now(), 1)
+            field_count = 2
+        elif query in self.local_thisyear:
+            qd = now()
+            field_count = 1
+        elif query in self.local_lastyear:
+            qd = months_ago(now(), 12)
+            field_count = 1
         else:
-            m = self.daysago_pat.search(query)
+            m = unit = None
+            for pat, unit in self.ago_pats:
+                if (m := pat.search(query)) is not None:
+                    break
             if m is not None:
-                num = query[:-len(m.group(1))]
+                num = query[: -len(m.group(1))]
                 try:
-                    qd = now() - timedelta(int(num))
-                except:
+                    num = int(num)
+                except ValueError:
                     raise ParseException(_('Number conversion error: {0}').format(num))
-                field_count = 3
+                try:
+                    if unit == 'daysago':
+                        qd, field_count = now() - timedelta(num), 3
+                    elif unit == 'monthsago':
+                        qd, field_count = months_ago(now(), num), 2
+                    else:
+                        qd, field_count = months_ago(now(), 12 * num), 1
+                except ValueError, OverflowError:
+                    raise ParseException(_('Date out of range: {0}').format(query))
             else:
+                if self.dotted_month_year_pat.fullmatch(query) is not None:
+                    query = query.replace('.', '-')
                 try:
                     qd = parse_date(query, as_utc=False)
-                except:
+                    field_count = self.specified_field_count(query)
+                except Exception:
                     raise ParseException(_('Date conversion error: {0}').format(query))
-                if '-' in query:
-                    field_count = query.count('-') + 1
-                else:
-                    field_count = query.count('/') + 1
 
         for v, book_ids in field_iter():
-            if isinstance(v, string_or_bytes):
+            if isinstance(v, (str, bytes)):
                 v = parse_date(v)
             if v is not None and relop(dt_as_local(v), qd, field_count):
                 matches |= book_ids
 
         return matches
+
+
 # }}}
 
 
 class NumericSearch:  # {{{
-
     def __init__(self):
         self.operators = OrderedDict((
             ('!=', operator.ne),
@@ -237,9 +301,16 @@ class NumericSearch:  # {{{
         dt = datatype
 
         if is_many and query in {'true', 'false'}:
-            valcheck = lambda x: True
             if datatype == 'rating':
-                valcheck = lambda x: x is not None and x > 0
+
+                def valcheck(x):
+                    return x is not None and x > 0
+
+            else:
+
+                def valcheck(x):
+                    return True
+
             found = set()
             for val, book_ids in field_iter():
                 if valcheck(val):
@@ -248,25 +319,45 @@ class NumericSearch:  # {{{
 
         if query == 'false':
             if location == 'cover':
-                relop = lambda x,y: not bool(x)
+
+                def relop(x, y):
+                    return not bool(x)
+
             else:
-                relop = lambda x,y: x is None
+
+                def relop(x, y):
+                    return x is None
+
         elif query == 'true':
             if location == 'cover':
-                relop = lambda x,y: bool(x)
+
+                def relop(x, y):
+                    return bool(x)
+
             else:
-                relop = lambda x,y: x is not None
+
+                def relop(x, y):
+                    return x is not None
+
         else:
-            for k, relop in iteritems(self.operators):
+            for k, relop in self.operators.items():
                 if query.startswith(k):
-                    query = query[len(k):]
+                    query = query[len(k) :]
                     break
             else:
                 relop = self.operators['=']
 
+            cast: Callable[..., int | float]
             if dt == 'rating':
-                cast = lambda x: 0 if x is None else int(x)
-                adjust = lambda x: x // 2
+
+                def _cast_for_rating(x):
+                    return 0 if x is None else int(x)
+
+                cast = _cast_for_rating
+
+                def adjust(x):
+                    return x // 2
+
             else:
                 # Datatype is empty if the source is a template. Assume float
                 cast = float if dt in ('float', 'composite', 'half-rating', '') else int
@@ -274,7 +365,7 @@ class NumericSearch:  # {{{
             mult = 1.0
             if len(query) > 1:
                 mult = query[-1].lower()
-                mult = {'k': 1024.,'m': 1024.**2, 'g': 1024.**3}.get(mult, 1.0)
+                mult = {'k': 1024.0, 'm': 1024.0**2, 'g': 1024.0**3}.get(mult, 1.0)
                 if mult != 1.0:
                     query = query[:-1]
             else:
@@ -283,11 +374,15 @@ class NumericSearch:  # {{{
             try:
                 q = cast(query) * mult
             except Exception:
-                raise ParseException(
-                        _('Non-numeric value in query: {0}').format(query))
+                raise ParseException(_('Non-numeric value in query: {0}').format(query))
             if dt == 'half-rating':
-                q = int(round(q * 2))
-                cast = int
+                try:
+                    q = round(q * 2)
+                    cast = int
+                except ValueError, OverflowError:
+                    # nan or inf cannot be rounded, compare them as floats so
+                    # that nan matches nothing and inf compares as expected
+                    q *= 2
 
         qfalse = query == 'false'
         for val, book_ids in field_iter():
@@ -298,60 +393,92 @@ class NumericSearch:  # {{{
             try:
                 v = cast(val)
             except Exception:
-                v = None
+                raise ParseException(_('Non-numeric value in column {0}: {1}').format(location, val))
             if v:
                 v = adjust(v)
             if relop(v, q):
                 matches |= book_ids
         return matches
 
+
 # }}}
+
+nfc = partial(unicodedata.normalize, 'NFC')
+nfkc = partial(unicodedata.normalize, 'NFKC')
+nfkd = partial(unicodedata.normalize, 'NFKD')
+nfd = partial(unicodedata.normalize, 'NFD')
+
+
+def local_forms(x: str) -> set[str]:
+    x = icu_lower(x)
+    return {nfc(x), nfd(x), nfkc(x), nfkd(x)}
 
 
 class BooleanSearch:  # {{{
-
     def __init__(self):
-        self.local_no        = icu_lower(_('no'))
-        self.local_yes       = icu_lower(_('yes'))
-        self.local_unchecked = icu_lower(_('unchecked'))
-        self.local_checked   = icu_lower(_('checked'))
-        self.local_empty     = icu_lower(_('empty'))
-        self.local_blank     = icu_lower(_('blank'))
-        self.local_bool_values = {
-            self.local_no, self.local_unchecked, '_no', 'false', 'no', 'unchecked', '_unchecked',
-            self.local_yes, self.local_checked, 'checked', '_checked', '_yes', 'true', 'yes',
-            self.local_empty, self.local_blank, 'blank', '_blank', '_empty', 'empty'}
+        local_no = local_forms(_('No')) | local_forms(_('no'))
+        local_yes = local_forms(_('Yes')) | local_forms(_('yes'))
+        local_unchecked = local_forms(_('unchecked'))
+        local_checked = local_forms(_('checked'))
+        local_empty = local_forms(_('empty'))
+        local_blank = local_forms(_('blank'))
+
+        self.valid_bool_values = frozenset(
+            {
+                '_no',
+                'false',
+                'no',
+                'unchecked',
+                '_unchecked',
+                'checked',
+                '_checked',
+                '_yes',
+                'true',
+                'yes',
+                'blank',
+                '_blank',
+                '_empty',
+                'empty',
+            }
+            | local_no
+            | local_yes
+            | local_unchecked
+            | local_checked
+            | local_empty
+            | local_blank
+        )
+        self.no_and_unchecked = frozenset({'unchecked', '_unchecked', 'no', '_no', 'false'} | local_no | local_unchecked)
+        self.no_and_unchecked_with_true = frozenset({'unchecked', '_unchecked', 'no', '_no', 'true'} | local_no | local_unchecked)
+        self.yes_and_checked = frozenset({'checked', '_checked', 'yes', '_yes', 'true'} | local_yes | local_checked)
+        self.empty_and_blank = frozenset({'blank', '_blank', 'empty', '_empty', 'false'} | local_empty | local_blank)
 
     def __call__(self, query, field_iter, bools_are_tristate):
         matches = set()
-        if query not in self.local_bool_values:
+        if query not in self.valid_bool_values:
             raise ParseException(_('Invalid boolean query "{0}"').format(query))
         for val, book_ids in field_iter():
             val = force_to_bool(val)
             if not bools_are_tristate:
                 if val is None or not val:  # item is None or set to false
-                    if query in {self.local_no, self.local_unchecked, 'unchecked', '_unchecked', 'no', '_no', 'false'}:
+                    if query in self.no_and_unchecked:
                         matches |= book_ids
-                else:  # item is explicitly set to true
-                    if query in {self.local_yes, self.local_checked, 'checked', '_checked', 'yes', '_yes', 'true'}:
-                        matches |= book_ids
-            else:
-                if val is None:
-                    if query in {self.local_empty, self.local_blank, 'blank', '_blank', 'empty', '_empty', 'false'}:
-                        matches |= book_ids
-                elif not val:  # is not None and false
-                    if query in {self.local_no, self.local_unchecked, 'unchecked', '_unchecked', 'no', '_no', 'true'}:
-                        matches |= book_ids
-                else:  # item is not None and true
-                    if query in {self.local_yes, self.local_checked, 'checked', '_checked', 'yes', '_yes', 'true'}:
-                        matches |= book_ids
+                elif query in self.yes_and_checked:
+                    matches |= book_ids
+            elif val is None:
+                if query in self.empty_and_blank:
+                    matches |= book_ids
+            elif not val:  # is not None and false
+                if query in self.no_and_unchecked_with_true:
+                    matches |= book_ids
+            elif query in self.yes_and_checked:
+                matches |= book_ids
         return matches
+
 
 # }}}
 
 
 class KeyPairSearch:  # {{{
-
     def __call__(self, query, field_iter, candidates, use_primary_find):
         matches = set()
         if ':' in query:
@@ -376,17 +503,16 @@ class KeyPairSearch:  # {{{
             return found if valq == 'true' else candidates - found
 
         for m, book_ids in field_iter():
-            for key, val in iteritems(m):
-                if (keyq and not _match(keyq, (key,), keyq_mkind,
-                                        use_primary_find_in_search=use_primary_find)):
+            for key, val in m.items():
+                if keyq and not _match(keyq, (key,), keyq_mkind, use_primary_find_in_search=use_primary_find):
                     continue
-                if (valq and not _match(valq, (val,), valq_mkind,
-                                        use_primary_find_in_search=use_primary_find)):
+                if valq and not _match(valq, (val,), valq_mkind, use_primary_find_in_search=use_primary_find):
                     continue
                 matches |= book_ids
                 break
 
         return matches
+
 
 # }}}
 
@@ -401,7 +527,7 @@ class SavedSearchQueries:  # {{{
             self._db = weakref.ref(db)
         except TypeError:
             # db could be None
-            self._db = lambda : None
+            self._db = lambda: None
         self.load_from_db()
 
     def load_from_db(self):
@@ -454,21 +580,36 @@ class SavedSearchQueries:  # {{{
 
     def names(self):
         return sorted(self.queries, key=sort_key)
+
+
 # }}}
 
 
 class Parser(SearchQueryParser):  # {{{
-
-    def __init__(self, dbcache, all_book_ids, gst, date_search, num_search,
-                 bool_search, keypair_search, limit_search_columns, limit_search_columns_to,
-                 locations, virtual_fields, lookup_saved_search, parse_cache):
+    def __init__(
+        self,
+        dbcache,
+        all_book_ids,
+        gst,
+        date_search,
+        num_search,
+        bool_search,
+        keypair_search,
+        limit_search_columns,
+        limit_search_columns_to,
+        locations,
+        virtual_fields,
+        lookup_saved_search,
+        parse_cache,
+        allow_templates=True,
+    ):
+        self.allow_templates = allow_templates
         self.dbcache, self.all_book_ids = dbcache, all_book_ids
         self.all_search_locations = frozenset(locations)
         self.grouped_search_terms = gst
         self.date_search, self.num_search = date_search, num_search
         self.bool_search, self.keypair_search = bool_search, keypair_search
-        self.limit_search_columns, self.limit_search_columns_to = (
-            limit_search_columns, limit_search_columns_to)
+        self.limit_search_columns, self.limit_search_columns_to = (limit_search_columns, limit_search_columns_to)
         self.virtual_fields = virtual_fields or {}
         if 'marked' not in self.virtual_fields:
             self.virtual_fields['marked'] = self
@@ -500,8 +641,7 @@ class Parser(SearchQueryParser):  # {{{
         self.virtual_field_used = False
         return SearchQueryParser.parse(self, *args, **kwargs)
 
-    def get_matches(self, location, query, candidates=None,
-                    allow_recursion=True):
+    def get_matches(self, location, query, candidates=None, allow_recursion=True):
         # If candidates is not None, it must not be modified. Changing its
         # value will break query optimization in the search parser
         matches = set()
@@ -518,20 +658,17 @@ class Parser(SearchQueryParser):  # {{{
             if not vl:
                 raise ParseException(_('No such Virtual library: {}').format(query))
             try:
-                return candidates & self.dbcache.books_in_virtual_library(
-                            query, virtual_fields=self.virtual_fields)
+                return candidates & self.dbcache.books_in_virtual_library(query, virtual_fields=self.virtual_fields)
             except RuntimeError:
                 raise ParseException(_('Virtual library search is recursive: {}').format(query))
 
-        if (len(location) > 2 and location.startswith('@') and
-                    location[1:] in self.grouped_search_terms):
+        if len(location) > 2 and location.startswith('@') and location[1:] in self.grouped_search_terms:
             location = location[1:]
 
         # get metadata key associated with the search term. Eliminates
         # dealing with plurals and other aliases
         original_location = location
-        location = self.field_metadata.search_term_to_field_key(
-            icu_lower(location.strip()))
+        location = self.field_metadata.search_term_to_field_key(icu_lower(location.strip()))
         # grouped search terms
         if isinstance(location, list):
             if allow_recursion:
@@ -542,8 +679,7 @@ class Parser(SearchQueryParser):  # {{{
                     invert = False
                 for loc in location:
                     c = candidates.copy()
-                    m = self.get_matches(loc, query,
-                            candidates=c, allow_recursion=False)
+                    m = self.get_matches(loc, query, candidates=c, allow_recursion=False)
                     matches |= m
                     c -= m
                     if len(c) == 0:
@@ -551,13 +687,11 @@ class Parser(SearchQueryParser):  # {{{
                 if invert:
                     matches = self.all_book_ids - matches
                 return matches
-            raise ParseException(
-                       _('Recursive query group detected: {0}').format(query))
+            raise ParseException(_('Recursive query group detected: {0}').format(query))
 
         # If the user has asked to restrict searching over all field, apply
         # that restriction
-        if (location == 'all' and self.limit_search_columns and
-            self.limit_search_columns_to):
+        if location == 'all' and self.limit_search_columns and self.limit_search_columns_to:
             terms = set()
             for l in self.limit_search_columns_to:
                 l = icu_lower(l.strip())
@@ -567,13 +701,12 @@ class Parser(SearchQueryParser):  # {{{
                 c = candidates.copy()
                 for l in terms:
                     try:
-                        m = self.get_matches(l, query,
-                            candidates=c, allow_recursion=allow_recursion)
+                        m = self.get_matches(l, query, candidates=c, allow_recursion=allow_recursion)
                         matches |= m
                         c -= m
                         if len(c) == 0:
                             break
-                    except:
+                    except Exception:
                         pass
                 return matches
 
@@ -584,53 +717,55 @@ class Parser(SearchQueryParser):  # {{{
             dt = fm['datatype']
 
             # take care of dates special case
-            if (dt == 'datetime' or (
-                dt == 'composite' and
-                fm['display'].get('composite_sort', '') == 'date')):
+            if dt == 'datetime' or (dt == 'composite' and fm['display'].get('composite_sort', '') == 'date'):
                 if location == 'date':
                     location = 'timestamp'
-                return self.date_search(
-                    icu_lower(query), partial(self.field_iter, location, candidates))
+                return self.date_search(icu_lower(query), partial(self.field_iter, location, candidates))
 
             # take care of numbers special case
-            if (dt in ('rating', 'int', 'float') or
-                    (dt == 'composite' and
-                     fm['display'].get('composite_sort', '') == 'number')):
+            if dt in ('rating', 'int', 'float') or (dt == 'composite' and fm['display'].get('composite_sort', '') == 'number'):
                 if location == 'id':
                     is_many = False
 
                     def fi(default_value=None):
                         for qid in candidates:
                             yield qid, {qid}
+
                 else:
                     field = self.dbcache.fields[location]
                     fi, is_many = partial(self.field_iter, location, candidates), field.is_many
                 if dt == 'rating' and fm['display'].get('allow_half_stars'):
                     dt = 'half-rating'
-                return self.num_search(
-                    icu_lower(query), fi, location, dt, candidates, is_many=is_many)
+                return self.num_search(icu_lower(query), fi, location, dt, candidates, is_many=is_many)
 
             # take care of the 'count' operator for is_multiples
-            if (fm['is_multiple'] and
-                len(query) > 1 and query[0] == '#' and query[1] in '=<>!'):
-                return self.num_search(icu_lower(query[1:]), partial(
-                        self.dbcache.fields[location].iter_counts, candidates,
-                        get_metadata=self.dbcache._get_proxy_metadata),
-                    location, dt, candidates)
+            if fm['is_multiple'] and len(query) > 1 and query[0] == '#' and query[1] in '=<>!':
+                return self.num_search(
+                    icu_lower(query[1:]),
+                    partial(
+                        self.dbcache.fields[location].iter_counts,
+                        candidates,
+                        get_metadata=self.dbcache._get_proxy_metadata,
+                    ),
+                    location,
+                    dt,
+                    candidates,
+                )
 
             # take care of boolean special case
             if dt == 'bool':
-                return self.bool_search(icu_lower(query),
-                                partial(self.field_iter, location, candidates),
-                                self.dbcache._pref('bools_are_tristate'))
+                return self.bool_search(
+                    icu_lower(query),
+                    partial(self.field_iter, location, candidates),
+                    self.dbcache._pref('bools_are_tristate'),
+                )
 
             # special case: colon-separated fields such as identifiers. isbn
             # is a special case within the case
             if fm.get('is_csp', False):
                 field_iter = partial(self.field_iter, location, candidates)
                 if location == 'identifiers' and original_location == 'isbn':
-                    return self.keypair_search('=isbn:'+query, field_iter,
-                                        candidates, upf)
+                    return self.keypair_search('=isbn:' + query, field_iter, candidates, upf)
                 return self.keypair_search(query, field_iter, candidates, upf)
 
         # check for user categories
@@ -641,44 +776,90 @@ class Parser(SearchQueryParser):  # {{{
         case_sensitive = prefs['case_sensitive']
 
         if location == 'template':
+            if not self.allow_templates:
+                raise TemplatesNotAllowed(_('Templates are not allowed in search expressions'))
             try:
-                template, sep, query = regex.split('#@#:([tdnb]):', query, flags=regex.IGNORECASE)
+                template, sep, query = regex.split(r'#@#:([tdnb]):', query, flags=regex.IGNORECASE)
                 if sep:
                     sep = sep.lower()
                 else:
                     sep = 't'
-            except:
+            except Exception:
                 if DEBUG:
                     import traceback
+
                     traceback.print_exc()
                 raise ParseException(_('search template: missing or invalid separator. Valid separators are: {}').format('#@#:[tdnb]:'))
             matchkind, query = _matchkind(query, case_sensitive=case_sensitive)
             matches = set()
             error_string = '*@*TEMPLATE_ERROR*@*'
             template_cache = {}
-            global_vars = {}
+            global_vars = {'_candidates': candidates}
             for book_id in candidates:
                 mi = self.dbcache.get_proxy_metadata(book_id)
-                val = mi.formatter.safe_format(template, {}, error_string, mi,
-                                            column_name='search template',
-                                            template_cache=template_cache,
-                                            global_vars=global_vars)
+                val = mi.formatter.safe_format(
+                    template,
+                    {},
+                    error_string,
+                    mi,
+                    column_name='search template',
+                    template_cache=template_cache,
+                    global_vars=global_vars,
+                    database=self.dbcache,
+                )
                 if val.startswith(error_string):
-                    raise ParseException(val[len(error_string):])
+                    raise ParseException(val[len(error_string) :])
                 if sep == 't':
-                    if _match(query, [val,], matchkind, use_primary_find_in_search=upf,
-                              case_sensitive=case_sensitive):
+                    if _match(
+                        query,
+                        [
+                            val,
+                        ],
+                        matchkind,
+                        use_primary_find_in_search=upf,
+                        case_sensitive=case_sensitive,
+                    ):
                         matches.add(book_id)
                 elif sep == 'n' and val:
-                    matches.update(self.num_search(
-                        icu_lower(query), {val:{book_id,}}.items, '', '',
-                        {book_id,}, is_many=False))
+                    matches.update(
+                        self.num_search(
+                            icu_lower(query),
+                            {
+                                val: {
+                                    book_id,
+                                }
+                            }.items,
+                            '',
+                            '',
+                            {
+                                book_id,
+                            },
+                            is_many=False,
+                        )
+                    )
                 elif sep == 'd' and val:
-                    matches.update(self.date_search(
-                            icu_lower(query), {val:{book_id,}}.items))
+                    matches.update(
+                        self.date_search(
+                            icu_lower(query),
+                            {
+                                val: {
+                                    book_id,
+                                }
+                            }.items,
+                        )
+                    )
                 elif sep == 'b':
-                    matches.update(self.bool_search(icu_lower(query),
-                            {'True' if val else 'False':{book_id,}}.items, False))
+                    matches.update(
+                        self.bool_search(
+                            icu_lower(query),
+                            {
+                                'True' if val else 'False': {
+                                    book_id,
+                                }
+                            }.items,
+                            False,
+                        )
+                    )
 
             return matches
 
@@ -692,7 +873,7 @@ class Parser(SearchQueryParser):  # {{{
                 continue
             if fm['search_terms'] and x not in {'series_sort', 'id'}:
                 if x not in self.virtual_fields and x != 'uuid':
-                    # We dont search virtual fields because if we do, search
+                    # We don't search virtual fields because if we do, search
                     # caching will not be used
                     all_locs.add(x)
                 field_metadata[x] = fm
@@ -704,19 +885,26 @@ class Parser(SearchQueryParser):  # {{{
         current_candidates = set(candidates)
 
         try:
-            rating_query = int(float(query)) * 2
-        except:
-            rating_query = None
-
-        try:
-            int_query = int(float(query))
-        except:
-            int_query = None
-
-        try:
             float_query = float(query)
-        except:
+        except ValueError:
             float_query = None
+        # Only whole numbers can match int columns. Ratings are stored as twice
+        # the number of stars and are matched the same way num_search() does
+        # for queries that specify the field: half star columns round to the
+        # nearest half star, other columns only match whole stars.
+        int_query = half_rating_query = None
+        if float_query is not None:
+            try:
+                # Parse directly to avoid losing precision for large values
+                int_query = int(query)
+            except ValueError:
+                if float_query.is_integer():
+                    int_query = int(float_query)
+            try:
+                half_rating_query = round(float_query * 2)
+            except ValueError, OverflowError:
+                # nan or inf cannot match any rating
+                half_rating_query = None
 
         for location in locations:
             current_candidates -= matches
@@ -725,7 +913,7 @@ class Parser(SearchQueryParser):  # {{{
                 q = canonicalize_lang(query)
                 if q is None:
                     lm = lang_map()
-                    rm = {v.lower():k for k,v in iteritems(lm)}
+                    rm = {v.lower(): k for k, v in lm.items()}
                     q = rm.get(query, query)
 
             if matchkind == CONTAINS_MATCH and q.lower() in {'true', 'false'}:
@@ -733,14 +921,19 @@ class Parser(SearchQueryParser):  # {{{
                 for val, book_ids in self.field_iter(location, current_candidates):
                     if val and (not hasattr(val, 'strip') or val.strip()):
                         found |= book_ids
-                matches |= (found if q.lower() == 'true' else (current_candidates-found))
+                matches |= found if q.lower() == 'true' else (current_candidates - found)
                 continue
 
             dt = field_metadata.get(location, {}).get('datatype', None)
             if dt == 'rating':
-                if rating_query is not None:
+                if field_metadata[location]['display'].get('allow_half_stars'):
+                    if half_rating_query is not None:
+                        for val, book_ids in self.field_iter(location, current_candidates):
+                            if val == half_rating_query:
+                                matches |= book_ids
+                elif int_query is not None:
                     for val, book_ids in self.field_iter(location, current_candidates):
-                        if val == rating_query:
+                        if val is not None and val // 2 == int_query:
                             matches |= book_ids
                 continue
 
@@ -761,7 +954,7 @@ class Parser(SearchQueryParser):  # {{{
             if location in text_fields:
                 for val, book_ids in self.field_iter(location, current_candidates):
                     if val is not None:
-                        if isinstance(val, string_or_bytes):
+                        if isinstance(val, (str, bytes)):
                             val = (val,)
                         if _match(q, val, matchkind, use_primary_find_in_search=upf, case_sensitive=case_sensitive):
                             matches |= book_ids
@@ -791,19 +984,20 @@ class Parser(SearchQueryParser):  # {{{
 
         for key in user_cats:
             if key == location or (check_subcats and key.startswith(location + '.')):
-                for (item, category, ign) in user_cats[key]:
+                for item, category, ign in user_cats[key]:
                     s = self.get_matches(category, '=' + item, candidates=c)
                     c -= s
                     matches |= s
         if query == 'false':
             return candidates - matches
         return matches
+
+
 # }}}
 
 
 class LRUCache:  # {{{
-
-    'A simple Least-Recently-Used cache'
+    "A simple Least-Recently-Used cache"
 
     def __init__(self, limit=50):
         self.item_map = {}
@@ -825,7 +1019,8 @@ class LRUCache:  # {{{
 
         self.item_map[key] = val
         self.age_map.append(key)
-    __setitem__  = add
+
+    __setitem__ = add
 
     def get(self, key, default=None):
         ans = self.item_map.get(key, default)
@@ -854,12 +1049,13 @@ class LRUCache:  # {{{
         return self.get(key)
 
     def __iter__(self):
-        return iteritems(self.item_map)
+        yield from self.item_map.items()
+
+
 # }}}
 
 
 class Search:
-
     MAX_CACHE_UPDATE = 50
 
     def __init__(self, db, opt_name, all_search_locations=()):
@@ -918,23 +1114,32 @@ class Search:
         for query in remove:
             self.cache.pop(query)
 
-    def create_parser(self, dbcache, virtual_fields=None):
+    def create_parser(self, dbcache, virtual_fields=None, allow_templates=True):
         return Parser(
-            dbcache, set(), dbcache._pref('grouped_search_terms'),
-            self.date_search, self.num_search, self.bool_search,
+            dbcache,
+            set(),
+            dbcache._pref('grouped_search_terms'),
+            self.date_search,
+            self.num_search,
+            self.bool_search,
             self.keypair_search,
             prefs['limit_search_columns'],
-            prefs['limit_search_columns_to'], self.all_search_locations,
-            virtual_fields, self.saved_searches.lookup, self.parse_cache)
+            prefs['limit_search_columns_to'],
+            self.all_search_locations,
+            virtual_fields,
+            self.saved_searches.lookup,
+            self.parse_cache,
+            allow_templates=allow_templates,
+        )
 
-    def __call__(self, dbcache, query, search_restriction, virtual_fields=None, book_ids=None):
-        '''
+    def __call__(self, dbcache, query, search_restriction, virtual_fields=None, book_ids=None, allow_templates=True):
+        """
         Return the set of ids of all records that match the specified
         query and restriction
-        '''
+        """
         # We construct a new parser instance per search as the parse is not
         # thread safe.
-        sqp = self.create_parser(dbcache, virtual_fields)
+        sqp = self.create_parser(dbcache, virtual_fields, allow_templates)
         try:
             return self._do_search(sqp, query, search_restriction, dbcache, book_ids=book_ids)
         finally:
@@ -943,7 +1148,7 @@ class Search:
     def query_is_cacheable(self, sqp, dbcache, query):
         if query:
             for name, value in sqp.get_queried_fields(query):
-                if name == 'template' and '#@#:d:' in value:
+                if name == 'template':
                     return False
                 elif name in dbcache.field_metadata.all_field_keys():
                     fm = dbcache.field_metadata[name]
@@ -955,8 +1160,8 @@ class Search:
         return True
 
     def _do_search(self, sqp, query, search_restriction, dbcache, book_ids=None):
-        ''' Do the search, caching the results. Results are cached only if the
-        search is on the full library and no virtual field is searched on '''
+        """Do the search, caching the results. Results are cached only if the
+        search is on the full library and no virtual field is searched on"""
         if isinstance(search_restriction, bytes):
             search_restriction = search_restriction.decode('utf-8')
         if isinstance(query, bytes):

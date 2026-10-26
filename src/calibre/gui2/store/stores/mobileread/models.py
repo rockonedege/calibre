@@ -1,23 +1,21 @@
 # -*- coding: utf-8 -*-
+# License: GPLv3 Copyright: 2011, John Schember <john@nachtimwald.com>
+
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-
-__license__ = 'GPL 3'
-__copyright__ = '2011, John Schember <john@nachtimwald.com>'
-__docformat__ = 'restructuredtext en'
-
 from operator import attrgetter
+from typing import overload
 
-from qt.core import (Qt, QAbstractItemModel, QModelIndex, pyqtSignal)
+from qt.core import QAbstractItemModel, QModelIndex, QObject, Qt, pyqtSignal
 
-from calibre.db.search import _match, CONTAINS_MATCH, EQUALS_MATCH, REGEXP_MATCH
+from calibre.db.search import CONTAINS_MATCH, EQUALS_MATCH, REGEXP_MATCH, _match
 from calibre.utils.config_base import prefs
 from calibre.utils.icu import sort_key
+from calibre.utils.localization import _
 from calibre.utils.search_query_parser import SearchQueryParser
 
 
 class BooksModel(QAbstractItemModel):
-
     total_changed = pyqtSignal(int)
 
     HEADERS = [_('Title'), _('Author(s)'), _('Format')]
@@ -45,7 +43,7 @@ class BooksModel(QAbstractItemModel):
         else:
             try:
                 self.books = list(self.search_filter.parse(self.filter))
-            except:
+            except Exception:
                 self.books = self.all_books
         self.layoutChanged.emit()
         self.sort(self.sort_col, self.sort_order)
@@ -54,38 +52,42 @@ class BooksModel(QAbstractItemModel):
     def index(self, row, column, parent=QModelIndex()):
         return self.createIndex(row, column)
 
-    def parent(self, index):
-        if not index.isValid() or index.internalId() == 0:
+    @overload
+    def parent(self, child: QModelIndex) -> QModelIndex: ...
+    @overload
+    def parent(self) -> 'QObject | None': ...
+    def parent(self, child: QModelIndex = QModelIndex()):
+        if not child.isValid() or child.internalId() == 0:
             return QModelIndex()
         return self.createIndex(0, 0)
 
-    def rowCount(self, *args):
+    def rowCount(self, parent=...):
         return len(self.books)
 
-    def columnCount(self, *args):
+    def columnCount(self, parent=...):
         return len(self.HEADERS)
 
-    def headerData(self, section, orientation, role):
+    def headerData(self, section, orientation, role=...):
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         text = ''
         if orientation == Qt.Orientation.Horizontal:
             if section < len(self.HEADERS):
                 text = self.HEADERS[section]
-            return (text)
+            return text
         else:
-            return (section+1)
+            return section + 1
 
-    def data(self, index, role):
+    def data(self, index, role=...):
         row, col = index.row(), index.column()
         result = self.books[row]
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
-                return (result.title)
+                return result.title
             elif col == 1:
-                return (result.author)
+                return result.author
             elif col == 2:
-                return (result.formats)
+                return result.formats
         return None
 
     def data_as_text(self, result, col):
@@ -98,19 +100,18 @@ class BooksModel(QAbstractItemModel):
             text = result.formats
         return text
 
-    def sort(self, col, order, reset=True):
-        self.sort_col = col
+    def sort(self, column, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder, reset=True):
+        self.sort_col = column
         self.sort_order = order
         if not self.books:
             return
         descending = order == Qt.SortOrder.DescendingOrder
-        self.books.sort(key=lambda x: sort_key(type(u'')(self.data_as_text(x, col))), reverse=descending)
+        self.books.sort(key=lambda x: sort_key(type('')(self.data_as_text(x, column))), reverse=descending)
         if reset:
             self.beginResetModel(), self.endResetModel()
 
 
 class SearchFilter(SearchQueryParser):
-
     USABLE_LOCATIONS = [
         'all',
         'author',
@@ -120,14 +121,16 @@ class SearchFilter(SearchQueryParser):
         'title',
     ]
 
-    def __init__(self, all_books=[]):
+    def __init__(self, all_books=None):
+        if all_books is None:
+            all_books = []
         SearchQueryParser.__init__(self, locations=self.USABLE_LOCATIONS)
         self.srs = set(all_books)
 
     def universal_set(self):
         return self.srs
 
-    def get_matches(self, location, query):
+    def get_matches(self, location, query, candidates=None):
         location = location.lower().strip()
         if location == 'authors':
             location = 'author'
@@ -153,12 +156,12 @@ class SearchFilter(SearchQueryParser):
         all_locs = set(self.USABLE_LOCATIONS) - {'all'}
         locations = all_locs if location == 'all' else [location]
         q = {
-             'author': lambda x: x.author.lower(),
-             'format': attrgetter('formats'),
-             'title': lambda x: x.title.lower(),
+            'author': lambda x: x.author.lower(),
+            'format': attrgetter('formats'),
+            'title': lambda x: x.title.lower(),
         }
         for x in ('author', 'format'):
-            q[x+'s'] = q[x]
+            q[x + 's'] = q[x]
         upf = prefs['use_primary_find_in_search']
         for sr in self.srs:
             for locvalue in locations:
@@ -186,5 +189,6 @@ class SearchFilter(SearchQueryParser):
                         break
                 except ValueError:  # Unicode errors
                     import traceback
+
                     traceback.print_exc()
         return matches

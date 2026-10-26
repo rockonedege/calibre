@@ -1,16 +1,15 @@
 #!/usr/bin/env python
-# vim:fileencoding=utf-8
 # License: GPL v3 Copyright: 2022, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-import apsw
 import builtins
 import hashlib
 import os
 import sys
 from contextlib import suppress
-from threading import Lock
 from itertools import count
+from threading import Lock
+
+import apsw
 
 from calibre.db import FTSQueryError
 from calibre.db.annotations import unicode_normalize
@@ -26,7 +25,6 @@ def print(*args, **kwargs):
 
 
 class FTS:
-
     def __init__(self, dbref):
         self.dbref = dbref
         self.pool = Pool(dbref)
@@ -39,7 +37,7 @@ class FTS:
             if conn.fts_dbpath is None:
                 main_db_path = os.path.abspath(conn.db_filename('main'))
                 dbpath = os.path.join(os.path.dirname(main_db_path), 'full-text-search.db')
-                conn.execute(f'ATTACH DATABASE "{dbpath}" AS fts_db')
+                conn.execute('ATTACH DATABASE ? AS fts_db', (dbpath,))
                 SchemaUpgrade(conn)
                 conn.execute('UPDATE fts_db.dirtied_formats SET in_progress=FALSE WHERE in_progress=TRUE')
                 num_dirty = conn.get('''SELECT COUNT(*) from fts_db.dirtied_formats''')[0][0]
@@ -104,16 +102,16 @@ class FTS:
         fmt = fmt.upper()
         if err_msg:
             conn.execute(
-                'INSERT OR REPLACE INTO fts_db.books_text '
-                '(book, timestamp, format, format_size, format_hash, err_msg) VALUES '
-                '(?, ?, ?, ?, ?, ?)', (
-                    book_id, ts, fmt, fmt_size, fmt_hash, err_msg))
+                'INSERT OR REPLACE INTO fts_db.books_text (book, timestamp, format, format_size, format_hash, err_msg) VALUES (?, ?, ?, ?, ?, ?)',
+                (book_id, ts, fmt, fmt_size, fmt_hash, err_msg),
+            )
         elif text:
             conn.execute(
                 'INSERT OR REPLACE INTO fts_db.books_text '
                 '(book, timestamp, format, format_size, format_hash, searchable_text, text_size, text_hash) VALUES '
-                '(?, ?, ?, ?, ?, ?, ?, ?)', (
-                    book_id, ts, fmt, fmt_size, fmt_hash, text, len(text), text_hash))
+                '(?, ?, ?, ?, ?, ?, ?, ?)',
+                (book_id, ts, fmt, fmt_size, fmt_hash, text, len(text), text_hash),
+            )
         else:
             conn.execute('DELETE FROM fts_db.dirtied_formats WHERE book=? AND format=?', (book_id, fmt))
 
@@ -136,8 +134,10 @@ class FTS:
     def queue_job(self, book_id, fmt, path, fmt_size, fmt_hash, start_time):
         conn = self.get_connection()
         fmt = fmt.upper()
-        for x in conn.get('SELECT id FROM fts_db.books_text WHERE book=? AND format=? AND format_size=? AND format_hash=?', (
-                book_id, fmt, fmt_size, fmt_hash)):
+        for x in conn.get(
+            'SELECT id FROM fts_db.books_text WHERE book=? AND format=? AND format_size=? AND format_hash=?',
+            (book_id, fmt, fmt_size, fmt_hash),
+        ):
             break
         else:
             self.pool.add_job(book_id, fmt, path, fmt_size, fmt_hash, start_time)
@@ -148,35 +148,48 @@ class FTS:
             os.remove(path)
         return False
 
-    def search(self,
-        fts_engine_query, use_stemming, highlight_start, highlight_end, snippet_size, restrict_to_book_ids,
-        return_text=True, process_each_result=None
+    def search(
+        self,
+        fts_engine_query,
+        use_stemming,
+        highlight_start,
+        highlight_end,
+        snippet_size,
+        restrict_to_book_ids,
+        return_text=True,
+        process_each_result=None,
     ):
         if restrict_to_book_ids is not None and not restrict_to_book_ids:
             return
         fts_engine_query = unicode_normalize(fts_engine_query)
         fts_table = 'books_fts' + ('_stemmed' if use_stemming else '')
+        data = []
         if return_text:
             text = 'books_text.searchable_text'
             if highlight_start is not None and highlight_end is not None:
                 if snippet_size is not None:
-                    text = f'snippet("{fts_table}", 0, "{highlight_start}", "{highlight_end}", "…", {max(1, min(snippet_size, 64))})'
+                    text = f'''snippet("{fts_table}", 0, ?, ?, '…', {max(1, min(snippet_size, 64))})'''
                 else:
-                    text = f'highlight("{fts_table}", 0, "{highlight_start}", "{highlight_end}")'
+                    text = f'''highlight("{fts_table}", 0, ?, ?)'''
+                data.append(highlight_start)
+                data.append(highlight_end)
             text = ', ' + text
         else:
             text = ''
         query = 'SELECT {0}.id, {0}.book, {0}.format {1} FROM {0} '.format('books_text', text)
         query += f' JOIN {fts_table} ON fts_db.books_text.id = {fts_table}.rowid'
         query += ' WHERE '
-        data = []
         conn = self.get_connection()
         temp_table_name = ''
         if restrict_to_book_ids:
-            temp_table_name = f'fts_restrict_search_{next(self.temp_table_counter)}'
-            conn.execute(f'CREATE TABLE temp.{temp_table_name}(x INTEGER)')
-            conn.executemany(f'INSERT INTO temp.{temp_table_name} VALUES (?)', tuple((x,) for x in restrict_to_book_ids))
-            query += f' fts_db.books_text.book IN temp.{temp_table_name} AND '
+            if len(restrict_to_book_ids) == 1:
+                only_book = int(next(iter(restrict_to_book_ids)))
+                query += f' fts_db.books_text.book == {only_book} AND '
+            else:
+                temp_table_name = f'fts_restrict_search_{next(self.temp_table_counter)}'
+                conn.execute(f'CREATE TABLE temp.{temp_table_name}(x INTEGER)')
+                conn.executemany(f'INSERT INTO temp.{temp_table_name} VALUES (?)', tuple((x,) for x in restrict_to_book_ids))
+                query += f' fts_db.books_text.book IN temp.{temp_table_name} AND '
         query += f' "{fts_table}" MATCH ?'
         data.append(fts_engine_query)
         query += f' ORDER BY {fts_table}.rank '

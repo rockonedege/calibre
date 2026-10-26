@@ -1,29 +1,28 @@
-'''
-CSS case-mangling transform.
-'''
+# License: GPLv3 Copyright: 2008, Marshall T. Vandegrift <llasram@gmail.com>
 
-__license__   = 'GPL v3'
-__copyright__ = '2008, Marshall T. Vandegrift <llasram@gmail.com>'
+"""
+CSS case-mangling transform.
+"""
 
 from lxml import etree
-from calibre.ebooks.oeb.base import XHTML, XHTML_NS
-from calibre.ebooks.oeb.base import CSS_MIME
-from calibre.ebooks.oeb.base import namespace
-from calibre.ebooks.oeb.stylizer import Stylizer
-from polyglot.builtins import string_or_bytes
 
-CASE_MANGLER_CSS = """
+from calibre.ebooks.oeb.base import CSS_MIME, XHTML, XHTML_NS, namespace
+from calibre.ebooks.oeb.stylizer import Stylizer
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import title_case as icu_title
+from calibre.utils.icu import upper as icu_upper
+
+CASE_MANGLER_CSS = '''
 .calibre_lowercase {
     font-variant: normal;
     font-size: 0.65em;
 }
-"""
+'''
 
 TEXT_TRANSFORMS = {'capitalize', 'uppercase', 'lowercase'}
 
 
 class CaseMangler:
-
     @classmethod
     def config(cls, cfg):
         return cfg
@@ -45,8 +44,7 @@ class CaseMangler:
         for item in self.oeb.spine:
             html = item.data
             relhref = item.relhref(href)
-            etree.SubElement(html.find(XHTML('head')), XHTML('link'),
-                             rel='stylesheet', href=relhref, type=CSS_MIME)
+            etree.SubElement(html.find(XHTML('head')), XHTML('link'), rel='stylesheet', href=relhref, type=CSS_MIME)
             stylizer = Stylizer(html, item.href, self.oeb, self.opts, self.profile)
             self.mangle_elem(html.find(XHTML('body')), stylizer)
 
@@ -95,8 +93,7 @@ class CaseMangler:
                 last = child
 
     def mangle_elem(self, elem, stylizer):
-        if not isinstance(elem.tag, string_or_bytes) or \
-           namespace(elem.tag) != XHTML_NS:
+        if not isinstance(elem.tag, (str, bytes)) or namespace(elem.tag) != XHTML_NS:
             return
         children = list(elem)
         style = stylizer.style(elem)

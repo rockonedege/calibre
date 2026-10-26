@@ -1,24 +1,18 @@
 #!/usr/bin/env python
-
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
 import textwrap
-from collections import OrderedDict, Counter
+from collections import Counter, OrderedDict
 
 from calibre.ebooks.docx.block_styles import ParagraphStyle, inherit, twips
 from calibre.ebooks.docx.char_styles import RunStyle
-from calibre.ebooks.docx.tables import TableStyle
-from polyglot.builtins import iteritems, itervalues
 
 
 class PageProperties:
-
-    '''
+    """
     Class representing page level properties (page size/margins) read from
     sectPr elements.
-    '''
+    """
 
     def __init__(self, namespace, elems=()):
         self.width, self.height = 595.28, 841.89  # pts, A4
@@ -39,9 +33,9 @@ class PageProperties:
 
 
 class Style:
-    '''
+    """
     Class representing a <w:style> element. Can contain block, character, etc. styles.
-    '''
+    """
 
     def __init__(self, namespace, elem):
         self.namespace = namespace
@@ -62,6 +56,8 @@ class Style:
 
         if self.style_type in {'paragraph', 'character', 'table'}:
             if self.style_type == 'table':
+                from calibre.ebooks.docx.tables import TableStyle
+
                 for tblPr in namespace.XPath('./w:tblPr')(elem):
                     ts = TableStyle(namespace, tblPr)
                     if self.table_style is None:
@@ -91,6 +87,8 @@ class Style:
     def resolve_based_on(self, parent):
         if parent.table_style is not None:
             if self.table_style is None:
+                from calibre.ebooks.docx.tables import TableStyle
+
                 self.table_style = TableStyle(self.namespace)
             self.table_style.resolve_based_on(parent.table_style)
         if parent.paragraph_style is not None:
@@ -104,10 +102,9 @@ class Style:
 
 
 class Styles:
-
-    '''
+    """
     Collection of all styles defined in the document. Used to get the final styles applicable to elements in the document markup.
-    '''
+    """
 
     def __init__(self, namespace, tables):
         self.namespace = namespace
@@ -123,7 +120,7 @@ class Styles:
         self.default_paragraph_style = self.default_character_style = None
 
     def __iter__(self):
-        yield from itervalues(self.id_map)
+        yield from self.id_map.values()
 
     def __getitem__(self, key):
         return self.id_map[key]
@@ -247,7 +244,10 @@ class Styles:
                     self.para_char_cache[p] = default_para.character_style
 
             def has_numbering(block_style):
-                num_id, lvl = getattr(block_style, 'numbering_id', inherit), getattr(block_style, 'numbering_level', inherit)
+                num_id, lvl = (
+                    getattr(block_style, 'numbering_id', inherit),
+                    getattr(block_style, 'numbering_level', inherit),
+                )
                 return num_id is not None and num_id is not inherit and lvl is not None and lvl is not inherit
 
             is_numbering = has_numbering(direct_formatting)
@@ -259,9 +259,7 @@ class Styles:
                 ps = self.numbering.get_para_style(num_id, lvl)
                 if ps is not None:
                     parent_styles.append(ps)
-            if (
-                not is_numbering and not is_section_break and linked_style is not None and has_numbering(linked_style.paragraph_style)
-            ):
+            if not is_numbering and not is_section_break and linked_style is not None and has_numbering(linked_style.paragraph_style):
                 num_id, lvl = linked_style.paragraph_style.numbering_id, linked_style.paragraph_style.numbering_level
                 p.set('calibre_num_id', f'{lvl}:{num_id}')
                 is_numbering = True
@@ -341,7 +339,7 @@ class Styles:
                     setattr(s, prop, inherit)
                 setattr(block_style, prop, next(iter(vals)))
 
-        for p, runs in iteritems(layers):
+        for p, runs in layers.items():
             has_links = '1' in {r.get('is-link', None) for r in runs}
             char_styles = [self.resolve_run(r) for r in runs]
             block_style = self.resolve_paragraph(p)
@@ -387,7 +385,7 @@ class Styles:
 
         fs = promote_most_common(block_styles, 'font_size', int(self.body_font_size[:2]))
         if fs is not None:
-            self.body_font_size = '%.3gpt' % fs
+            self.body_font_size = f'{fs:.3g}pt'
 
         color = promote_most_common(block_styles, 'color', self.body_color, inherit_means='currentColor')
         if color is not None:
@@ -425,26 +423,26 @@ class Styles:
             ps.pageBreakBefore = True
 
     def register(self, css, prefix):
-        h = hash(frozenset(iteritems(css)))
+        h = hash(frozenset(css.items()))
         ans, _ = self.classes.get(h, (None, None))
         if ans is None:
             self.counter[prefix] += 1
-            ans = '%s_%d' % (prefix, self.counter[prefix])
+            ans = f'{prefix}_{self.counter[prefix]}'
             self.classes[h] = (ans, css)
         return ans
 
     def generate_classes(self):
-        for bs in itervalues(self.para_cache):
+        for bs in self.para_cache.values():
             css = bs.css
             if css:
                 self.register(css, 'block')
-        for bs in itervalues(self.run_cache):
+        for bs in self.run_cache.values():
             css = bs.css
             if css:
                 self.register(css, 'text')
 
     def class_name(self, css):
-        h = hash(frozenset(iteritems(css)))
+        h = hash(frozenset(css.items()))
         return self.classes.get(h, (None, None))[0]
 
     def generate_css(self, dest_dir, docx, notes_nopb, nosupsub):
@@ -458,8 +456,7 @@ class Styles:
             /* In word headings only have bold font if explicitly specified,
                 similarly the font size is the body font size, unless explicitly set. */
             h1, h2, h3, h4, h5, h6 { font-weight: normal; font-size: 1rem }
-            /* Setting padding-left to zero breaks rendering of lists, so we only set the other values to zero and leave padding-left for the user-agent */
-            ul, ol { margin: 0; padding-top: 0; padding-bottom: 0; padding-right: 0 }
+            ul, ol { margin: 0; padding: 0; padding-inline-start: 0; padding-inline-end: 0; margin-block-start: 0; margin-block-end: 0 }
 
             /* The word hyperlink styling will set text-decoration to underline if needed */
             a { text-decoration: none }
@@ -480,19 +477,25 @@ class Styles:
             dl.footnote:last-of-type { page-break-after: avoid }
             '''
 
-        s = s + '''\
+        s = (
+            s
+            + '''\
             span.tab { white-space: pre }
 
             p.index-entry { text-indent: 0pt; }
             p.index-entry a:visited { color: blue }
             p.index-entry a:hover { color: red }
             '''
+        )
 
         if nosupsub:
-            s = s + '''\
+            s = (
+                s
+                + '''\
                sup { vertical-align: top }
                sub { vertical-align: bottom }
                '''
+            )
 
         body_color = ''
         if self.body_color.lower() not in ('currentcolor', 'inherit'):
@@ -502,8 +505,8 @@ class Styles:
             prefix = ef + '\n' + prefix
 
         ans = []
-        for (cls, css) in sorted(itervalues(self.classes), key=lambda x:x[0]):
-            b = (f'\t{k}: {v};' for k, v in iteritems(css))
+        for cls, css in sorted(self.classes.values(), key=lambda x: x[0]):
+            b = (f'\t{k}: {v};' for k, v in css.items())
             b = '\n'.join(b)
             ans.append('.{} {{\n{}\n}}\n'.format(cls, b.rstrip(';')))
         return prefix + '\n' + '\n'.join(ans)

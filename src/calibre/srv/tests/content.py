@@ -1,44 +1,55 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import zlib, json, time, os
+import http.client
+import json
+import os
+import time
+from compression import zlib
 from io import BytesIO
 
 from calibre.ebooks.metadata.epub import get_metadata
 from calibre.ebooks.metadata.opf2 import OPF
 from calibre.srv.tests.base import LibraryBaseTest
 from calibre.utils.imghdr import identify
+from calibre.utils.resources import get_image_path as I
+from calibre.utils.resources import get_path as P
 from calibre.utils.shared_file import share_open
-from polyglot import http_client
-from polyglot.binary import from_hex_unicode
+from polyglot.binary import as_base64_bytes, from_hex_unicode
 
 
-def setUpModule():
-    # Needed for cover generation
+def run_generated_cover_checks() -> list[str]:
+    # Runs in a worker process, see ContentTest.test_generated_cover()
+    import unittest
+
     from calibre.gui2 import ensure_app, load_builtin_fonts
+    from calibre.utils.run_tests import init_env
+
+    init_env()
+    # The QApplication must be created in the main thread, not in the server
+    # thread that generates the cover
     ensure_app(), load_builtin_fonts()
+    result = unittest.TestResult()
+    ContentTest('generated_cover_checks').run(result)
+    return [tb for test, tb in result.errors + result.failures]
 
 
 class ContentTest(LibraryBaseTest):
-
     def test_static(self):  # {{{
-        'Test serving of static content'
+        "Test serving of static content"
         with self.create_server() as server:
             conn = server.connect()
 
             def missing(url, body=b''):
                 conn.request('GET', url)
                 r = conn.getresponse()
-                self.ae(r.status, http_client.NOT_FOUND)
+                self.ae(r.status, http.client.NOT_FOUND)
                 self.ae(r.read(), body)
 
             for prefix in ('static', 'icon'):
-                missing('/%s/missing.xxx' % prefix)
-                missing('/%s/../out.html' % prefix, b'Naughty, naughty!')
-                missing('/%s/C:/out.html' % prefix, b'Naughty, naughty!')
+                missing(f'/{prefix}/missing.xxx')
+                missing(f'/{prefix}/../out.html', b'Naughty, naughty!')
+                missing(f'/{prefix}/C:/out.html', b'Naughty, naughty!')
 
             def test_response(r):
                 self.assertIn('max-age=', r.getheader('Cache-Control'))
@@ -51,27 +62,48 @@ class ContentTest(LibraryBaseTest):
                 raw = P(src, data=True)
                 conn.request('GET', url)
                 r = conn.getresponse()
-                self.ae(r.status, http_client.OK)
+                self.ae(r.status, http.client.OK)
                 data = r.read()
                 if sz is None:
                     self.ae(data, raw)
                 else:
                     self.ae(sz, identify(data)[1])
                 test_response(r)
-                conn.request('GET', url, headers={'If-None-Match':r.getheader('ETag')})
+                conn.request('GET', url, headers={'If-None-Match': r.getheader('ETag')})
                 r = conn.getresponse()
-                self.ae(r.status, http_client.NOT_MODIFIED)
+                self.ae(r.status, http.client.NOT_MODIFIED)
                 self.ae(b'', r.read())
 
             test('content-server/empty.html', '/static/empty.html')
-            test('images/lt.png', '/favicon.png')
+            test('images/favicon-512.png', '/favicon.png')
             test('images/lt.png', '/icon/lt.png?sz=full')
             test('images/lt.png', '/icon/lt.png', sz=48)
             test('images/lt.png', '/icon/lt.png?sz=16', sz=16)
+
     # }}}
 
+    def test_generated_cover(self):
+        "Test serving of auto generated covers"
+        # Generating covers needs a QApplication, which tests must not create
+        # in the test process, so run the checks in a worker process
+        from calibre.utils.ipc.simple_worker import fork_job
+
+        errors = fork_job('calibre.srv.tests.content', 'run_generated_cover_checks', no_output=True)['result']
+        if errors:
+            self.fail('\n'.join(errors))
+
+    def generated_cover_checks(self):
+        with self.create_server() as server:
+            conn = server.connect()
+            conn.request('GET', '/get/cover/3')  # book 3 has no cover
+            r = conn.getresponse()
+            data = r.read()
+            self.ae(r.status, http.client.OK)
+            self.ae(r.getheader('Content-Type'), 'image/jpeg')
+            self.ae(identify(data)[0], 'jpeg')
+
     def test_get(self):  # {{{
-        'Test /get'
+        "Test /get"
         with self.create_server() as server:
             db = server.handler.router.ctx.library_broker.get(None)
             conn = server.connect()
@@ -85,7 +117,8 @@ class ContentTest(LibraryBaseTest):
             # Test various invalid parameters
             def bad(*args):
                 r, data = get(*args)
-                self.ae(r.status, http_client.NOT_FOUND)
+                self.ae(r.status, http.client.NOT_FOUND)
+
             bad('xxx', 1)
             bad('fmt1', 10)
             bad('fmt1', 1, 'zzzz')
@@ -103,13 +136,13 @@ class ContentTest(LibraryBaseTest):
             # Test fetching of format with metadata update
             raw = P('quick_start/eng.epub', data=True)
             r, data = get('epub', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             etag = r.getheader('ETag')
             self.assertIsNotNone(etag)
             self.ae(r.getheader('Used-Cache'), 'no')
             self.assertTrue(data.startswith(b'PK'))
             self.assertGreaterEqual(len(data), len(raw))
-            db.set_field('title', {1:'changed'})
+            db.set_field('title', {1: 'changed'})
             r, data = get('epub', 1)
             self.assertNotEqual(r.getheader('ETag'), etag)
             etag = r.getheader('ETag')
@@ -121,11 +154,12 @@ class ContentTest(LibraryBaseTest):
 
             # Test plugboards
             import calibre.library.save_to_disk as c
+
             orig, c.DEBUG = c.DEBUG, False
             try:
                 db.set_pref('plugboards', {'epub': {'content_server': [['changed, {title}', 'title']]}})
                 # this is needed as the cache is not invalidated for plugboard changes
-                db.set_field('title', {1:'again'})
+                db.set_field('title', {1: 'again'})
                 r, data = get('epub', 1)
                 self.assertNotEqual(r.getheader('ETag'), etag)
                 etag = r.getheader('ETag')
@@ -138,46 +172,59 @@ class ContentTest(LibraryBaseTest):
             # Test the serving of covers
             def change_cover(count, book_id=2):
                 cpath = db.format_abspath(book_id, '__COVER_INTERNAL__')
-                db.set_cover({2:I('lt.png', data=True)})
+                db.set_cover({2: I('lt.png', data=True)})
                 t = time.time() + 1 + count
                 # Ensure mtime changes, needed on OS X where HFS+ has a 1s
                 # mtime resolution
                 os.utime(cpath, (t, t))
 
             r, data = get('cover', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(data, db.cover(1))
             self.ae(r.getheader('Used-Cache'), 'no')
             self.ae(r.getheader('Content-Type'), 'image/jpeg')
             r, data = get('cover', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(data, db.cover(1))
             self.ae(r.getheader('Used-Cache'), 'yes')
-            r, data = get('cover', 3)
-            self.ae(r.status, http_client.OK)  # Auto generated cover
             r, data = get('thumb', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(identify(data), ('jpeg', 60, 60))
             self.ae(r.getheader('Used-Cache'), 'no')
             r, data = get('thumb', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(r.getheader('Used-Cache'), 'yes')
             r, data = get('thumb', 1, q='sz=100')
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(identify(data), ('jpeg', 100, 100))
             self.ae(r.getheader('Used-Cache'), 'no')
             r, data = get('thumb', 1, q='sz=100x100')
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(r.getheader('Used-Cache'), 'yes')
+            # fill scales the cover to cover the box rather than fit inside it
+            r, data = get('thumb', 1, q='sz=50x100')
+            self.ae(r.status, http.client.OK)
+            self.ae(identify(data), ('jpeg', 50, 50))
+            r, data = get('thumb', 1, q='sz=50x100&fill=1')
+            self.ae(r.status, http.client.OK)
+            self.ae(identify(data), ('jpeg', 100, 100))
+            self.ae(r.getheader('Used-Cache'), 'no')
+            r, data = get('thumb', 1, q='sz=50x100&fill=1')
+            self.ae(r.getheader('Used-Cache'), 'yes')
+            from calibre.srv.content import fill_box
+
+            self.ae(fill_box(600, 200, 60, 100), (300, 100))
+            self.ae(fill_box(100, 600, 60, 100), (60, 360))
+            self.ae(fill_box(50, 70, 60, 100), (50, 70))
             change_cover(1, 1)
             r, data = get('thumb', 1, q='sz=100')
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(identify(data), ('jpeg', 100, 100))
             self.ae(r.getheader('Used-Cache'), 'no')
 
             # Test file sharing in cache
             r, data = get('cover', 2)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(data, db.cover(2))
             self.ae(r.getheader('Used-Cache'), 'no')
             path = from_hex_unicode(r.getheader('Tempfile'))
@@ -185,7 +232,7 @@ class ContentTest(LibraryBaseTest):
             # Now force an update
             change_cover(1)
             r, data = get('cover', 2)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(data, db.cover(2))
             self.ae(r.getheader('Used-Cache'), 'no')
             path = from_hex_unicode(r.getheader('Tempfile'))
@@ -193,7 +240,7 @@ class ContentTest(LibraryBaseTest):
             # Do it again
             change_cover(2)
             r, data = get('cover', 2)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(data, db.cover(2))
             self.ae(r.getheader('Used-Cache'), 'no')
             self.ae(f.read(), fdata)
@@ -201,45 +248,117 @@ class ContentTest(LibraryBaseTest):
 
             # Test serving of metadata as opf
             r, data = get('opf', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(r.getheader('Content-Type'), 'application/oebps-package+xml; charset=UTF-8')
             self.assertIsNotNone(r.getheader('Last-Modified'))
             opf = OPF(BytesIO(data), populate_spine=False, try_to_guess_cover=False)
             self.ae(db.field_for('title', 1), opf.title)
             self.ae(db.field_for('authors', 1), tuple(opf.authors))
-            conn.request('GET', '/get/opf/1', headers={'Accept-Encoding':'gzip'})
+            conn.request('GET', '/get/opf/1', headers={'Accept-Encoding': 'gzip'})
             r = conn.getresponse()
-            self.ae(r.status, http_client.OK), self.ae(r.getheader('Content-Encoding'), 'gzip')
+            self.ae(r.status, http.client.OK), self.ae(r.getheader('Content-Encoding'), 'gzip')
             raw = r.read()
-            self.ae(zlib.decompress(raw, 16+zlib.MAX_WBITS), data)
+            self.ae(zlib.decompress(raw, 16 + zlib.MAX_WBITS), data)
 
             # Test serving metadata as json
             r, data = get('json', 1)
-            self.ae(r.status, http_client.OK)
+            self.ae(r.status, http.client.OK)
             self.ae(db.field_for('title', 1), json.loads(data)['title'])
-            conn.request('GET', '/get/json/1', headers={'Accept-Encoding':'gzip'})
+            conn.request('GET', '/get/json/1', headers={'Accept-Encoding': 'gzip'})
             r = conn.getresponse()
-            self.ae(r.status, http_client.OK), self.ae(r.getheader('Content-Encoding'), 'gzip')
+            self.ae(r.status, http.client.OK), self.ae(r.getheader('Content-Encoding'), 'gzip')
             raw = r.read()
-            self.ae(zlib.decompress(raw, 16+zlib.MAX_WBITS), data)
+            self.ae(zlib.decompress(raw, 16 + zlib.MAX_WBITS), data)
 
     # }}}
 
-    def test_char_count(self):  # {{{
-        from calibre.srv.render_book import get_length
-        from calibre.ebooks.oeb.parse_utils import html5_parse
+    def test_set_fields_languages(self):  # {{{
+        "Test /cdb/set-fields with a single language string"
+        with self.create_server(auth=True, auth_mode='basic') as server:
+            server.handler.ctx.user_manager.add_user('12', 'test')
+            db = server.handler.router.ctx.library_broker.get(None)
+            conn = server.connect()
 
-        root = html5_parse('<p>a b\nc\td\re')
-        self.ae(get_length(root), 5)
-        root = html5_parse('<script>xyz</script>a<iMg>b')
-        self.ae(get_length(root), 1002)
-        root = html5_parse('<p><!-- abc -->m')
-        self.ae(get_length(root), 1)
+            data = json.dumps({
+                'changes': {'languages': 'eng'},
+                'loaded_book_ids': [1],
+            }).encode('utf-8')
+
+            conn.request(
+                'POST',
+                '/cdb/set-fields/1',
+                body=data,
+                headers={'Content-Type': 'application/json', 'Authorization': 'Basic ' + as_base64_bytes('12:test').decode()},
+            )
+
+            r = conn.getresponse()
+            self.ae(r.status, http.client.OK)
+
+            result = json.loads(r.read())
+            self.ae(result['1']['languages'], ['eng'])
+            self.ae(db.field_for('languages', 1), ('eng',))
+
+    # }}}
+
+    def test_recipe_formats_forbidden(self):  # {{{
+        "Test that recipe formats cannot be added, converted or viewed remotely"
+        from calibre.srv.utils import is_recipe_fmt
+        from calibre.utils.serialize import MSGPACK_MIME, msgpack_dumps
+
+        for fmt in ('recipe', 'RECIPE', 'original_recipe', 'downloaded_recipe', 'DOWNLOADED_RECIPE', 'original_downloaded_recipe', '.downloaded_recipe'):
+            self.assertTrue(is_recipe_fmt(fmt), fmt)
+        for fmt in ('epub', 'original_epub', 'recipes', 'zip'):
+            self.assertFalse(is_recipe_fmt(fmt), fmt)
+
+        with self.create_server(auth=True, auth_mode='basic') as server:
+            server.handler.ctx.user_manager.add_user('12', 'test')
+            db = server.handler.router.ctx.library_broker.get(None)
+            auth = {'Authorization': 'Basic ' + as_base64_bytes('12:test').decode()}
+            conn = server.connect()
+
+            def request(path, body, content_type='application/json'):
+                conn.request('POST', path, body=body, headers={'Content-Type': content_type, **auth})
+                r = conn.getresponse()
+                return r.status, r.read()
+
+            for fmt in ('recipe', 'original_recipe', 'downloaded_recipe', 'original_downloaded_recipe'):
+                data = json.dumps({
+                    'changes': {'added_formats': [{'ext': fmt, 'data_url': 'data:application/octet-stream;base64,' + as_base64_bytes(b'x').decode()}]},
+                    'loaded_book_ids': [1],
+                }).encode('utf-8')
+                status, _ = request('/cdb/set-fields/1', data)
+                self.ae(status, http.client.FORBIDDEN, fmt)
+
+                status, raw = request('/cdb/cmd/add_format/0', msgpack_dumps((1, ('x.' + fmt, b'x'), fmt.upper(), True)), MSGPACK_MIME)
+                self.ae(status, http.client.OK, fmt)
+                self.assertIn('err', json.loads(raw), fmt)
+                self.assertNotIn(fmt.upper(), db.formats(1), fmt)
+
+            # Recipe formats that are already in the library must not be
+            # converted or viewed by remote clients
+            db.add_format(1, 'DOWNLOADED_RECIPE', BytesIO(b'x'), run_hooks=False)
+            data = json.dumps({'input_fmt': 'downloaded_recipe', 'output_fmt': 'epub', 'options': {}}).encode('utf-8')
+            status, _ = request('/conversion/start/1', data)
+            self.ae(status, http.client.FORBIDDEN)
+            for path in ('/conversion/start/1', '/conversion/status/1'):
+                conn.request('GET', path, headers=auth)
+                r = conn.getresponse()
+                r.read()
+                self.ae(r.status, http.client.METHOD_NOT_ALLOWED, path)
+            conn.request('GET', '/conversion/book-data/1?input_fmt=downloaded_recipe', headers=auth)
+            r = conn.getresponse()
+            self.ae(r.status, http.client.OK)
+            self.assertNotIn('DOWNLOADED_RECIPE', json.loads(r.read())['input_formats'])
+            conn.request('GET', '/book-manifest/1/DOWNLOADED_RECIPE', headers=auth)
+            r = conn.getresponse()
+            r.read()
+            self.ae(r.status, http.client.FORBIDDEN)
+
     # }}}
 
     def test_html_as_json(self):  # {{{
-        from calibre.srv.render_book import html_as_json
         from calibre.ebooks.oeb.parse_utils import html5_parse
+        from calibre.srv.render_book import html_as_json
 
         def t(html, body_children, nsmap=('http://www.w3.org/1999/xhtml',)):
             root = html5_parse(html)
@@ -251,14 +370,41 @@ class ContentTest(LibraryBaseTest):
             bc = data['tree']['c'][1]['c']
             self.ae(bc, body_children)
 
-        t('<p>a<!--c-->t</p>l', [{"n":"p","x":"a","l":"l","c":[{"s":"c","x":"c","l":"t"}]}])
-        t('<p class="foo" id="bar">a', [{"n":"p","x":"a","a":[['class','foo'],['id','bar']]}])
+        t('<p>a<!--c-->t</p>l', [{'n': 'p', 'x': 'a', 'l': 'l', 'c': [{'s': 'c', 'x': 'c', 'l': 't'}]}])
+        t('<p class="foo" id="bar">a', [{'n': 'p', 'x': 'a', 'a': [['class', 'foo'], ['id', 'bar']]}])
         t(
-            '<svg xlink:href="h"></svg>', [{'n': 'svg', 's': 1, 'a': [['href', 'h', 2]]}],
-            ('http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/svg', 'http://www.w3.org/1999/xlink')
+            '<svg xlink:href="h"></svg>',
+            [{'n': 'svg', 's': 1, 'a': [['href', 'h', 2]]}],
+            ('http://www.w3.org/1999/xhtml', 'http://www.w3.org/2000/svg', 'http://www.w3.org/1999/xlink'),
         )
         text = '🐈\n\t\\mūs"'
-        t(f"<p id='{text}'>Peña", [{"n":"p","x":"Peña","a":[['id',text]]}])
+        t(f"<p id='{text}'>Peña", [{'n': 'p', 'x': 'Peña', 'a': [['id', text]]}])
         text = 'a' * (127 * 1024)
-        t('<p>{0}<p>{0}'.format(text), [{"n":"p","x":text}, {'n':'p','x':text}])
+        t(f'<p>{text}<p>{text}', [{'n': 'p', 'x': text}, {'n': 'p', 'x': text}])
+
+    # }}}
+
+    def test_last_read_cache(self):  # {{{
+        from calibre.srv.last_read import last_read_cache, path_cache
+
+        path_cache.clear()
+        lrc = last_read_cache(':memory:')
+        epoch = lrc.add_last_read_position('lib', 1, 'FMT', 'user', 'epubcfi(/)', 0.1, 'tt')
+        expected = {
+            'library_id': 'lib',
+            'book_id': 1,
+            'format': 'FMT',
+            'cfi': 'epubcfi(/)',
+            'epoch': epoch,
+            'pos_frac': 0.1,
+            'tooltip': 'tt',
+        }
+        self.ae(lrc.get_recently_read('user'), [expected])
+        epoch = lrc.add_last_read_position('lib', 1, 'FMT', 'user', 'epubcfi(/)', 0.2, 'tt')
+        expected['epoch'], expected['pos_frac'] = epoch, 0.2
+        self.ae(lrc.get_recently_read('user'), [expected])
+        for book_id in range(2, 7):
+            lrc.add_last_read_position('lib', book_id, 'FMT', 'user', 'epubcfi(/)', 0.1, 'tt')
+        self.ae(len(lrc.get_recently_read('user')), lrc.limit)
+
     # }}}

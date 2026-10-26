@@ -1,57 +1,74 @@
-__license__ = 'GPL 3'
-__copyright__ = '2010, Li Fanxi <lifanxi@freemindworld.com>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2010, Li Fanxi <lifanxi@freemindworld.com>
 
 import os
 
-from calibre.customize.conversion import OutputFormatPlugin, OptionRecommendation
-from calibre.ptempfile import TemporaryDirectory
 from calibre.constants import __appname__, __version__
+from calibre.customize.conversion import OptionRecommendation, OutputFormatPlugin
+from calibre.ptempfile import TemporaryDirectory
+from calibre.utils.localization import _
 
 
 class SNBOutput(OutputFormatPlugin):
-
     name = 'SNB Output'
     author = 'Li Fanxi'
     file_type = 'snb'
     commit_name = 'snb_output'
 
     options = {
-        OptionRecommendation(name='snb_output_encoding', recommended_value='utf-8',
+        OptionRecommendation(
+            name='snb_output_encoding',
+            recommended_value='utf-8',
             level=OptionRecommendation.LOW,
-            help=_('Specify the character encoding of the output document. '
-            'The default is utf-8.')),
-        OptionRecommendation(name='snb_max_line_length',
-            recommended_value=0, level=OptionRecommendation.LOW,
-            help=_('The maximum number of characters per line. This splits on '
-            'the first space before the specified value. If no space is found '
-            'the line will be broken at the space after and will exceed the '
-            'specified value. Also, there is a minimum of 25 characters. '
-            'Use 0 to disable line splitting.')),
-        OptionRecommendation(name='snb_insert_empty_line',
-            recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Specify whether or not to insert an empty line between '
-            'two paragraphs.')),
-        OptionRecommendation(name='snb_dont_indent_first_line',
-            recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Specify whether or not to insert two space characters '
-            'to indent the first line of each paragraph.')),
-        OptionRecommendation(name='snb_hide_chapter_name',
-            recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Specify whether or not to hide the chapter title for each '
-            'chapter. Useful for image-only output (eg. comics).')),
-        OptionRecommendation(name='snb_full_screen',
-            recommended_value=False, level=OptionRecommendation.LOW,
-            help=_('Resize all the images for full screen mode. ')),
-     }
+            help=_('Specify the character encoding of the output document. The default is utf-8.'),
+        ),
+        OptionRecommendation(
+            name='snb_max_line_length',
+            recommended_value=0,
+            level=OptionRecommendation.LOW,
+            help=_(
+                'The maximum number of characters per line. This splits on '
+                'the first space before the specified value. If no space is found '
+                'the line will be broken at the space after and will exceed the '
+                'specified value. Also, there is a minimum of 25 characters. '
+                'Use 0 to disable line splitting.'
+            ),
+        ),
+        OptionRecommendation(
+            name='snb_insert_empty_line',
+            recommended_value=False,
+            level=OptionRecommendation.LOW,
+            help=_('Specify whether or not to insert an empty line between two paragraphs.'),
+        ),
+        OptionRecommendation(
+            name='snb_dont_indent_first_line',
+            recommended_value=False,
+            level=OptionRecommendation.LOW,
+            help=_('Specify whether or not to insert two space characters to indent the first line of each paragraph.'),
+        ),
+        OptionRecommendation(
+            name='snb_hide_chapter_name',
+            recommended_value=False,
+            level=OptionRecommendation.LOW,
+            help=_('Specify whether or not to hide the chapter title for each chapter. Useful for image-only output (eg. comics).'),
+        ),
+        OptionRecommendation(
+            name='snb_full_screen',
+            recommended_value=False,
+            level=OptionRecommendation.LOW,
+            help=_('Resize all the images for full screen mode. '),
+        ),
+    }
 
-    def convert(self, oeb_book, output_path, input_plugin, opts, log):
+    def convert(self, oeb_book, output, input_plugin, opts, log):
+        output_path = output
         from lxml import etree
+
         from calibre.ebooks.snb.snbfile import SNBFile
-        from calibre.ebooks.snb.snbml import SNBMLizer, ProcessFileName
+        from calibre.ebooks.snb.snbml import ProcessFileName, SNBMLizer
 
         self.opts = opts
         from calibre.ebooks.oeb.transforms.rasterize import SVGRasterizer, Unavailable
+
         try:
             rasterizer = SVGRasterizer()
             rasterizer(oeb_book, opts)
@@ -96,31 +113,30 @@ class SNBOutput(OutputFormatPlugin):
                     href = g['cover'].href
 
             # Output book info file
-            bookInfoTree = etree.Element("book-snbf", version="1.0")
-            headTree = etree.SubElement(bookInfoTree, "head")
-            etree.SubElement(headTree, "name").text = title
-            etree.SubElement(headTree, "author").text = ' '.join(authors)
-            etree.SubElement(headTree, "language").text = lang
-            etree.SubElement(headTree, "rights")
-            etree.SubElement(headTree, "publisher").text = publishers
-            etree.SubElement(headTree, "generator").text = __appname__ + ' ' + __version__
-            etree.SubElement(headTree, "created")
-            etree.SubElement(headTree, "abstract").text = abstract
+            bookInfoTree = etree.Element('book-snbf', version='1.0')
+            headTree = etree.SubElement(bookInfoTree, 'head')
+            etree.SubElement(headTree, 'name').text = title
+            etree.SubElement(headTree, 'author').text = ' '.join(authors)
+            etree.SubElement(headTree, 'language').text = lang
+            etree.SubElement(headTree, 'rights')
+            etree.SubElement(headTree, 'publisher').text = publishers
+            etree.SubElement(headTree, 'generator').text = __appname__ + ' ' + __version__
+            etree.SubElement(headTree, 'created')
+            etree.SubElement(headTree, 'abstract').text = abstract
             if href is not None:
-                etree.SubElement(headTree, "cover").text = ProcessFileName(href)
+                etree.SubElement(headTree, 'cover').text = ProcessFileName(href)
             else:
-                etree.SubElement(headTree, "cover")
+                etree.SubElement(headTree, 'cover')
             with open(os.path.join(snbfDir, 'book.snbf'), 'wb') as f:
                 f.write(etree.tostring(bookInfoTree, pretty_print=True, encoding='utf-8'))
 
             # Output TOC
-            tocInfoTree = etree.Element("toc-snbf")
-            tocHead = etree.SubElement(tocInfoTree, "head")
-            tocBody = etree.SubElement(tocInfoTree, "body")
+            tocInfoTree = etree.Element('toc-snbf')
+            tocHead = etree.SubElement(tocInfoTree, 'head')
+            tocBody = etree.SubElement(tocInfoTree, 'body')
             outputFiles = {}
             if oeb_book.toc.count() == 0:
-                log.warn('This SNB file has no Table of Contents. '
-                    'Creating a default TOC')
+                log.warn('This SNB file has no Table of Contents. Creating a default TOC')
                 first = next(iter(oeb_book.spine))
                 oeb_book.toc.add(_('Start page'), first.href)
             else:
@@ -130,39 +146,37 @@ class SNBOutput(OutputFormatPlugin):
                     # "Cover Pages".
                     # oeb_book.toc does not support "insert", so we generate
                     # the tocInfoTree directly instead of modifying the toc
-                    ch = etree.SubElement(tocBody, "chapter")
-                    ch.set("src", ProcessFileName(first.href) + ".snbc")
+                    ch = etree.SubElement(tocBody, 'chapter')
+                    ch.set('src', ProcessFileName(first.href) + '.snbc')
                     ch.text = _('Cover pages')
                     outputFiles[first.href] = []
-                    outputFiles[first.href].append(("", _("Cover pages")))
+                    outputFiles[first.href].append(('', _('Cover pages')))
 
             for tocitem in oeb_book.toc:
                 if tocitem.href.find('#') != -1:
                     item = tocitem.href.split('#')
                     if len(item) != 2:
-                        log.error('Error in TOC item: %s' % tocitem)
+                        log.error(f'Error in TOC item: {tocitem}')
+                    elif item[0] in outputFiles:
+                        outputFiles[item[0]].append((item[1], tocitem.title))
                     else:
-                        if item[0] in outputFiles:
-                            outputFiles[item[0]].append((item[1], tocitem.title))
-                        else:
-                            outputFiles[item[0]] = []
-                            if "" not in outputFiles[item[0]]:
-                                outputFiles[item[0]].append(("", tocitem.title + _(" (Preface)")))
-                                ch = etree.SubElement(tocBody, "chapter")
-                                ch.set("src", ProcessFileName(item[0]) + ".snbc")
-                                ch.text = tocitem.title + _(" (Preface)")
-                            outputFiles[item[0]].append((item[1], tocitem.title))
+                        outputFiles[item[0]] = []
+                        if '' not in outputFiles[item[0]]:
+                            outputFiles[item[0]].append(('', tocitem.title + _(' (Preface)')))
+                            ch = etree.SubElement(tocBody, 'chapter')
+                            ch.set('src', ProcessFileName(item[0]) + '.snbc')
+                            ch.text = tocitem.title + _(' (Preface)')
+                        outputFiles[item[0]].append((item[1], tocitem.title))
+                elif tocitem.href in outputFiles:
+                    outputFiles[tocitem.href].append(('', tocitem.title))
                 else:
-                    if tocitem.href in outputFiles:
-                        outputFiles[tocitem.href].append(("", tocitem.title))
-                    else:
-                        outputFiles[tocitem.href] = []
-                        outputFiles[tocitem.href].append(("", tocitem.title))
-                ch = etree.SubElement(tocBody, "chapter")
-                ch.set("src", ProcessFileName(tocitem.href) + ".snbc")
+                    outputFiles[tocitem.href] = []
+                    outputFiles[tocitem.href].append(('', tocitem.title))
+                ch = etree.SubElement(tocBody, 'chapter')
+                ch.set('src', ProcessFileName(tocitem.href) + '.snbc')
                 ch.text = tocitem.title
 
-            etree.SubElement(tocHead, "chapters").text = '%d' % len(tocBody)
+            etree.SubElement(tocHead, 'chapters').text = str(len(tocBody))
 
             with open(os.path.join(snbfDir, 'toc.snbf'), 'wb') as f:
                 f.write(etree.tostring(tocInfoTree, pretty_print=True, encoding='utf-8'))
@@ -173,18 +187,19 @@ class SNBOutput(OutputFormatPlugin):
             lastName = None
             for item in s:
                 from calibre.ebooks.oeb.base import OEB_DOCS, OEB_IMAGES
+
                 if m.hrefs[item.href].media_type in OEB_DOCS:
                     if item.href not in outputFiles:
-                        log.debug('File %s is unused in TOC. Continue in last chapter' % item.href)
+                        log.debug(f'File {item.href} is unused in TOC. Continue in last chapter')
                         mergeLast = True
-                    else:
-                        if oldTree is not None and mergeLast:
-                            log.debug('Output the modified chapter again: %s' % lastName)
-                            with open(os.path.join(snbcDir, lastName), 'wb') as f:
-                                f.write(etree.tostring(oldTree, pretty_print=True, encoding='utf-8'))
-                            mergeLast = False
+                    elif oldTree is not None and mergeLast:
+                        log.debug(f'Output the modified chapter again: {lastName}')
+                        assert lastName is not None
+                        with open(os.path.join(snbcDir, lastName), 'wb') as f:
+                            f.write(etree.tostring(oldTree, pretty_print=True, encoding='utf-8'))
+                        mergeLast = False
 
-                    log.debug('Converting %s to snbc...' % item.href)
+                    log.debug(f'Converting {item.href} to snbc...')
                     snbwriter = SNBMLizer(log)
                     snbcTrees = None
                     if not mergeLast:
@@ -193,24 +208,25 @@ class SNBOutput(OutputFormatPlugin):
                             postfix = ''
                             if subName != '':
                                 postfix = '_' + subName
-                            lastName = ProcessFileName(item.href + postfix + ".snbc")
+                            lastName = ProcessFileName(item.href + postfix + '.snbc')
                             oldTree = snbcTrees[subName]
                             with open(os.path.join(snbcDir, lastName), 'wb') as f:
                                 f.write(etree.tostring(oldTree, pretty_print=True, encoding='utf-8'))
                     else:
-                        log.debug('Merge %s with last TOC item...' % item.href)
-                        snbwriter.merge_content(oldTree, oeb_book, item, [('', _("Start"))], opts)
+                        log.debug(f'Merge {item.href} with last TOC item...')
+                        snbwriter.merge_content(oldTree, oeb_book, item, [('', _('Start'))], opts)
 
             # Output the last one if needed
-            log.debug('Output the last modified chapter again: %s' % lastName)
+            log.debug(f'Output the last modified chapter again: {lastName}')
             if oldTree is not None and mergeLast:
+                assert lastName is not None
                 with open(os.path.join(snbcDir, lastName), 'wb') as f:
                     f.write(etree.tostring(oldTree, pretty_print=True, encoding='utf-8'))
                 mergeLast = False
 
             for item in m:
                 if m.hrefs[item.href].media_type in OEB_IMAGES:
-                    log.debug('Converting image: %s ...' % item.href)
+                    log.debug(f'Converting image: {item.href} ...')
                     content = m.hrefs[item.href].data
                     # Convert & Resize image
                     self.HandleImage(content, os.path.join(snbiDir, ProcessFileName(item.href)))
@@ -221,7 +237,8 @@ class SNBOutput(OutputFormatPlugin):
             snbFile.Output(output_path)
 
     def HandleImage(self, imageData, imagePath):
-        from calibre.utils.img import image_from_data, resize_image, image_to_data
+        from calibre.utils.img import image_from_data, image_to_data, resize_image
+
         img = image_from_data(imageData)
         x, y = img.width(), img.height()
         if self.opts:
@@ -241,24 +258,25 @@ class SNBOutput(OutputFormatPlugin):
             #     img = img.rotate(90)
             #     x,y = y,x
             img = resize_image(img, x // scale, y // scale)
-        with lopen(imagePath, 'wb') as f:
+        with open(imagePath, 'wb') as f:
             f.write(image_to_data(img, fmt=imagePath.rpartition('.')[-1]))
 
 
 if __name__ == '__main__':
-    from calibre.ebooks.oeb.reader import OEBReader
-    from calibre.ebooks.oeb.base import OEBBook
-    from calibre.ebooks.conversion.preprocess import HTMLPreProcessor
     from calibre.customize.profiles import HanlinV3Output
+    from calibre.ebooks.conversion.preprocess import HTMLPreProcessor
+    from calibre.ebooks.oeb.base import OEBBook
+    from calibre.ebooks.oeb.reader import OEBReader
 
     class OptionValues:
-        pass
+        output_profile: HanlinV3Output
 
     opts = OptionValues()
     opts.output_profile = HanlinV3Output(None)
 
     html_preprocessor = HTMLPreProcessor(None, None, opts)
     from calibre.utils.logging import default_log
+
     oeb = OEBBook(default_log, html_preprocessor)
     reader = OEBReader
     reader()(oeb, '/tmp/bbb/processed/')

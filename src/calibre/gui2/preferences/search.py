@@ -1,25 +1,19 @@
 #!/usr/bin/env python
-
-
-__license__   = 'GPL v3'
-__copyright__ = '2010, Kovid Goyal <kovid@kovidgoyal.net>'
-__docformat__ = 'restructuredtext en'
+# License: GPLv3 Copyright: 2010, Kovid Goyal <kovid@kovidgoyal.net>
 
 from qt.core import QApplication, QTimer
 
-from calibre.db.categories import find_categories
-from calibre.gui2.preferences import ConfigWidgetBase, test_widget, \
-        CommaSeparatedList, AbortCommit
-from calibre.gui2.preferences.search_ui import Ui_Form
 from calibre.gui2 import config, error_dialog, gprefs
-from calibre.utils.config import prefs
-from calibre.utils.icu import sort_key
+from calibre.gui2.preferences import AbortCommit, CommaSeparatedList, ConfigWidgetBase, test_widget
+from calibre.gui2.preferences.search_ui import Ui_Form
 from calibre.library.caches import set_use_primary_find_in_search
-from polyglot.builtins import iteritems
+from calibre.utils.config import prefs
+from calibre.utils.icu import lower as icu_lower
+from calibre.utils.icu import sort_key
+from calibre.utils.localization import _
 
 
 class ConfigWidget(ConfigWidgetBase, Ui_Form):
-
     def genesis(self, gui):
         self.gui = gui
         db = gui.library_view.model().db
@@ -32,52 +26,68 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         r('show_highlight_toggle_button', gprefs)
         r('limit_search_columns', prefs)
         r('use_primary_find_in_search', prefs)
+        r('search_tool_bar_shows_text', gprefs)
+        r('allow_keyboard_search_in_library_views', gprefs)
+        r('keep_search_when_switching_vl', gprefs)
+        ossm = self.opt_saved_search_menu_is_hierarchical
+        ossm.setChecked('search' in db.new_api.pref('categories_using_hierarchy', []))
+        ossm.stateChanged.connect(self.changed_signal)
         r('case_sensitive', prefs)
         fl = db.field_metadata.get_search_terms()
         r('limit_search_columns_to', prefs, setting=CommaSeparatedList, choices=fl)
         self.clear_history_button.clicked.connect(self.clear_histories)
-        self.opt_use_primary_find_in_search.setToolTip(_(
-            'Searching will ignore accents on characters as well as punctuation and spaces.\nSo for example: {0} will match {1}').format(
-                'Penasthumb', 'Peña’s Thumb'))
-        self.gst_explanation.setText('<p>' + _(
-    "<b>Grouped search terms</b> are search names that permit a query to automatically "
-    "search across more than one column. For example, if you create a grouped "
-    "search term <code>allseries</code> with the value "
-    "<code>series, #myseries, #myseries2</code>, then "
-    "the query <code>allseries:adhoc</code> will find 'adhoc' in any of the "
-    "columns <code>series</code>, <code>#myseries</code>, and "
-    "<code>#myseries2</code>.<p> Enter the name of the "
-    "grouped search term in the drop-down box, enter the list of columns "
-    "to search in the value box, then push the Save button. "
-    "<p>Note: Search terms are forced to lower case; <code>MySearch</code> "
-    "and <code>mysearch</code> are the same term."
-    "<p>You can have your grouped search term show up as User categories in "
-    " the Tag browser. Just add the grouped search term names to the Make User "
-    "categories from box. You can add multiple terms separated by commas. "
-    "The new User category will be automatically "
-    "populated with all the items in the categories included in the grouped "
-    "search term. <p>Automatic User categories permit you to see easily "
-    "all the category items that "
-    "are in the columns contained in the grouped search term. Using the above "
-    "<code>allseries</code> example, the automatically-generated User category "
-    "will contain all the series mentioned in <code>series</code>, "
-    "<code>#myseries</code>, and <code>#myseries2</code>. This "
-    "can be useful to check for duplicates, to find which column contains "
-    "a particular item, or to have hierarchical categories (categories "
-    "that contain categories)."))
+        self.opt_use_primary_find_in_search.setToolTip(
+            _('Searching will ignore accents on characters as well as punctuation and spaces.\nSo for example: {0} will match {1}').format(
+                'Penasthumb', 'Peña’s Thumb'
+            )
+        )
+        self.gst_explanation.setText(
+            '<p>'
+            + _(
+                "<b>Grouped search terms</b> are search names that permit a query to automatically "
+                "search across more than one column. For example, if you create a grouped "
+                "search term <code>allseries</code> with the value "
+                "<code>series, #myseries, #myseries2</code>, then "
+                "the query <code>allseries:adhoc</code> will find 'adhoc' in any of the "
+                "columns <code>series</code>, <code>#myseries</code>, and "
+                "<code>#myseries2</code>.<p> Enter the name of the "
+                "grouped search term in the drop-down box, enter the list of columns "
+                "to search in the value box, then push the Save button. "
+                "<p>Note: Search terms are forced to lower case; <code>MySearch</code> "
+                "and <code>mysearch</code> are the same term. Search terms cannot be "
+                "hierarchical. Periods are not allowed in the term name."
+                "<p>Grouped search terms can show as User categories in the Tag browser "
+                "by adding the grouped search term names to the 'Make User "
+                "categories from' box. Multiple terms are separated by commas. "
+                "These 'automatic user categories' will be populated with items "
+                "from the categories included in the grouped search term. "
+                "<p>Automatic user categories permit you to see all the category items that "
+                "are in the columns contained in the grouped search term. Using the above "
+                "<code>allseries</code> example, the automatic user category "
+                "will contain all the series names in <code>series</code>, "
+                "<code>#myseries</code>, and <code>#myseries2</code>. This "
+                "can be useful to check for duplicates, to find which column contains "
+                "a particular item, or to have hierarchical categories (categories "
+                "that contain categories). "
+                "<p>Note: values from non-category columns such as comments won't appear "
+                "in automatic user categories. "
+            )
+        )
         self.gst = db.prefs.get('grouped_search_terms', {}).copy()
         self.orig_gst_keys = list(self.gst.keys())
 
         fm = db.new_api.field_metadata
-        categories = [x[0] for x in find_categories(fm) if fm[x[0]]['search_terms']]
+        categories = [x for x in fm.keys() if not x.startswith('@') and fm[x]['search_terms']]
         self.gst_value.update_items_cache(categories)
         QTimer.singleShot(0, self.fill_gst_box)
 
         self.user_category_layout.setContentsMargins(0, 30, 0, 0)
-        self.gst_names.lineEdit().setPlaceholderText(
-                         _('Enter new or select existing name'))
-        self.gst_value.lineEdit().setPlaceholderText(
-                         _('Enter list of column lookup names to search'))
+        _gst_names_le = self.gst_names.lineEdit()
+        assert _gst_names_le is not None
+        _gst_names_le.setPlaceholderText(_('Enter new or select existing name'))
+        _gst_value_le = self.gst_value.lineEdit()
+        assert _gst_value_le is not None
+        _gst_value_le.setPlaceholderText(_('Enter list of column lookup names to search'))
 
         self.category_fields = fl
         ml = [(_('Match any'), 'match_any'), (_('Match all'), 'match_all')]
@@ -104,8 +114,9 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             db.new_api.set_pref('grouped_search_make_user_categories', [])
         r('grouped_search_make_user_categories', db.prefs, setting=CommaSeparatedList)
         self.muc_changed = False
-        self.opt_grouped_search_make_user_categories.lineEdit().editingFinished.connect(
-                                                        self.muc_box_changed)
+        _muc_le = self.opt_grouped_search_make_user_categories.lineEdit()
+        assert _muc_le is not None
+        _muc_le.editingFinished.connect(self.muc_box_changed)
 
     def set_similar_fields(self, initial=False):
         self.set_similar('similar_authors_search_key', initial=initial)
@@ -129,7 +140,15 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         if dex >= 0:
             field.setCurrentIndex(dex)
         else:
-            field.setCurrentIndex(0)
+            # The field no longer exists. Try the default
+            dex = field.findText(self.db.prefs.defaults[name])
+            if dex >= 0:
+                field.setCurrentIndex(dex)
+            else:
+                # The default doesn't exist! Pick the first field in the list
+                field.setCurrentIndex(0)
+            # Emit a changed signal after all the other events have been processed
+            QTimer.singleShot(0, self.changed_signal.emit)
         field.blockSignals(False)
 
     def something_changed(self, dex):
@@ -142,29 +161,32 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
         idx = self.gst_names.currentIndex()
         name = icu_lower(str(self.gst_names.currentText()))
         if not name:
-            return error_dialog(self.gui, _('Grouped search terms'),
-                                _('The search term cannot be blank'),
-                                show=True)
+            return error_dialog(self.gui, _('Grouped search terms'), _('The search term name cannot be blank'), show=True)
+        if ' ' in name or '.' in name:
+            return error_dialog(
+                self.gui,
+                _('Invalid grouped search name'),
+                _('The grouped search term name cannot contain spaces or periods'),
+                show=True,
+            )
         if idx != 0:
             orig_name = str(self.gst_names.itemData(idx) or '')
         else:
             orig_name = ''
         if name != orig_name:
-            if name in self.db.field_metadata.get_search_terms() and \
-                    name not in self.orig_gst_keys:
-                return error_dialog(self.gui, _('Grouped search terms'),
+            if name in self.db.field_metadata.get_search_terms() and name not in self.orig_gst_keys:
+                return error_dialog(
+                    self.gui,
+                    _('Grouped search terms'),
                     _('That name is already used for a column or grouped search term'),
-                    show=True)
+                    show=True,
+                )
             if name in [icu_lower(p) for p in self.db.prefs.get('user_categories', {})]:
-                return error_dialog(self.gui, _('Grouped search terms'),
-                    _('That name is already used for User category'),
-                    show=True)
+                return error_dialog(self.gui, _('Grouped search terms'), _('That name is already used for User category'), show=True)
 
         val = [v.strip() for v in str(self.gst_value.text()).split(',') if v.strip()]
         if not val:
-            return error_dialog(self.gui, _('Grouped search terms'),
-                _('The value box cannot be empty'), show=True)
-
+            return error_dialog(self.gui, _('Grouped search terms'), _('The value box cannot be empty'), show=True)
         if orig_name and name != orig_name:
             del self.gst[orig_name]
         self.gst_changed = True
@@ -175,8 +197,7 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
 
     def gst_delete_clicked(self):
         if self.gst_names.currentIndex() == 0:
-            return error_dialog(self.gui, _('Grouped search terms'),
-                _('The empty grouped search term cannot be deleted'), show=True)
+            return error_dialog(self.gui, _('Grouped search terms'), _('The empty grouped search term cannot be deleted'), show=True)
         name = str(self.gst_names.currentText())
         if name in self.gst:
             del self.gst[name]
@@ -216,50 +237,78 @@ class ConfigWidget(ConfigWidgetBase, Ui_Form):
             self.gst_value.setText(','.join(self.gst[name]))
         self.gst_value.blockSignals(False)
 
-    def commit(self):
+    def commit(self, *args):
         if self.opt_case_sensitive.isChecked() and self.opt_use_primary_find_in_search.isChecked():
-            error_dialog(self, _('Incompatible options'), _(
-                'The option to have un-accented characters match accented characters has no effect'
-                ' if you also turn on case-sensitive searching. So only turn on one of those options'), show=True)
+            error_dialog(
+                self,
+                _('Incompatible options'),
+                _(
+                    'The option to have un-accented characters match accented characters has no effect'
+                    ' if you also turn on case-sensitive searching. So only turn on one of those options'
+                ),
+                show=True,
+            )
             raise AbortCommit()
-        if self.gst_changed:
+        ucs = (m.strip() for m in self.opt_grouped_search_make_user_categories.text().split(',') if m.strip())
+        ucs -= self.gst.keys()
+        if ucs:
+            error_dialog(
+                self,
+                _('Missing grouped search terms'),
+                _('The option "Make user categories from" contains names that aren\'t grouped search terms: {}').format(', '.join(sorted(ucs))),
+                show=True,
+            )
+            raise AbortCommit()
+
+        restart = ConfigWidgetBase.commit(self)
+        if self.gst_changed or self.muc_changed:
             self.db.new_api.set_pref('grouped_search_terms', self.gst)
             self.db.field_metadata.add_grouped_search_terms(self.gst)
-        self.db.new_api.set_pref('similar_authors_search_key',
-                          str(self.similar_authors_search_key.currentText()))
-        self.db.new_api.set_pref('similar_tags_search_key',
-                          str(self.similar_tags_search_key.currentText()))
-        self.db.new_api.set_pref('similar_series_search_key',
-                          str(self.similar_series_search_key.currentText()))
-        self.db.new_api.set_pref('similar_publisher_search_key',
-                          str(self.similar_publisher_search_key.currentText()))
-        return ConfigWidgetBase.commit(self)
+        self.db.new_api.set_pref('similar_authors_search_key', str(self.similar_authors_search_key.currentText()))
+        self.db.new_api.set_pref('similar_tags_search_key', str(self.similar_tags_search_key.currentText()))
+        self.db.new_api.set_pref('similar_series_search_key', str(self.similar_series_search_key.currentText()))
+        self.db.new_api.set_pref('similar_publisher_search_key', str(self.similar_publisher_search_key.currentText()))
+
+        cats = set(self.db.new_api.pref('categories_using_hierarchy', []))
+        if self.opt_saved_search_menu_is_hierarchical.isChecked():
+            cats.add('search')
+        else:
+            cats.discard('search')
+        self.db.new_api.set_pref('categories_using_hierarchy', list(cats))
+        return restart
 
     def refresh_gui(self, gui):
+        gui.refresh_search_bar_widgets()
+        self.gui.bars_manager.update_bars()
         gui.current_db.new_api.clear_caches()
         set_use_primary_find_in_search(prefs['use_primary_find_in_search'])
         gui.set_highlight_only_button_icon()
-        if self.muc_changed:
-            gui.tags_view.recount()
+        if self.gst_changed or self.muc_changed:
+            gui.tags_view.model().reset_tag_browser()
         gui.search.search_as_you_type(config['search_as_you_type'])
         gui.search.do_search()
 
     def clear_histories(self, *args):
-        for key, val in iteritems(config.defaults):
+        for key, val in config.defaults.items():
             if key.endswith('_search_history') and isinstance(val, list):
                 config[key] = []
         self.gui.search.clear_history()
         from calibre.gui2.widgets import history
+
         for key in (
-            'bulk_edit_search_for', 'bulk_edit_replace_with',
+            'bulk_edit_search_for',
+            'bulk_edit_replace_with',
             'viewer-highlights-search-panel-expression',
-            'viewer-search-panel-expression', 'library-fts-search-box',
+            'viewer-search-panel-expression',
+            'library-fts-search-box',
         ):
             history.set('lineedit_history_' + key, [])
         from calibre.gui2.viewer.config import vprefs
+
         for k in ('search', 'highlights'):
             vprefs.set(f'saved-{k}-settings', {})
         from calibre.gui2.ui import get_gui
+
         gui = get_gui()
         if gui is not None:
             gui.iactions['Full Text Search'].clear_search_history()

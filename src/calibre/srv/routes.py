@@ -1,29 +1,50 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2015, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2015, Kovid Goyal <kovid at kovidgoyal.net>'
-
-import sys, inspect, re, time, numbers, json as jsonlib, textwrap
+import http.client
+import inspect
+import json as jsonlib
+import numbers
+import re
+import sys
+import textwrap
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from operator import attrgetter
+from typing import IO, TYPE_CHECKING, Any, Concatenate, Literal, Protocol, Self
+from urllib.parse import quote as urlquote
 
-from calibre.srv.errors import HTTPSimpleResponse, HTTPNotFound, RouteError
+from calibre.srv.errors import HTTPNotFound, HTTPSimpleResponse, RouteError
 from calibre.srv.utils import http_date
-from calibre.utils.serialize import msgpack_dumps, json_dumps, MSGPACK_MIME
-from polyglot.builtins import iteritems, itervalues
-from polyglot import http_client
-from polyglot.urllib import quote as urlquote
+from calibre.utils.serialize import MSGPACK_MIME, json_dumps, msgpack_dumps
+
+if TYPE_CHECKING:
+    from calibre.srv.handler import Context
+    from calibre.srv.http_response import RequestData
+else:
+    Context = RequestData = None
 
 default_methods = frozenset(('HEAD', 'GET'))
 
 
-def json(ctx, rd, endpoint, output):
-    rd.outheaders.set('Content-Type', 'application/json; charset=UTF-8', replace_all=True)
-    if isinstance(output, bytes) or hasattr(output, 'fileno'):
-        ans = output  # Assume output is already UTF-8 encoded json
-    else:
-        ans = json_dumps(output)
-    return ans
+class JSONEndpoint:
+    def loads(self, *a, **kw) -> Any:
+        return jsonlib.loads(*a, **kw)
+
+    def dumps(self, *a, **kw) -> str:
+        return jsonlib.dumps(*a, **kw)
+
+    def __call__(self, ctx: Context, rd: RequestData, endpoint: RouteFunction, output: Any):
+        rd.outheaders.set('Content-Type', 'application/json; charset=UTF-8', replace_all=True)
+        if isinstance(output, bytes) or hasattr(output, 'fileno'):
+            ans = output  # Assume output is already UTF-8 encoded json
+        else:
+            ans = json_dumps(output)
+        return ans
+
+
+json = JSONEndpoint()
 
 
 def msgpack(ctx, rd, endpoint, output):
@@ -41,77 +62,113 @@ def msgpack_or_json(ctx, rd, endpoint, output):
     return func(ctx, rd, endpoint, output)
 
 
-json.loads, json.dumps = jsonlib.loads, jsonlib.dumps
-
-
 def route_key(route):
-    return route.partition('{')[0].rstrip('/')
+    return route.partition('{')[0].rstrip('/')  # ]]]}}))
 
 
-def endpoint(route,
-             methods=default_methods,
-             types=None,
-             auth_required=True,
-             android_workaround=False,
+class EndpointFunction(Protocol):
+    def __call__(self, ctx: Context, rd: RequestData, *path_segments: Any) -> Any: ...
 
-             # Manage the HTTP caching
-             # Set to None or 'no-cache' to prevent caching of this endpoint
-             # Set to a number to cache for at most number hours
-             # Set to a tuple (cache_type, max_age) to explicitly set the
-             # Cache-Control header
-             cache_control=False,
 
-             # The HTTP code to be used when no error occurs. By default it is
-             # 200 for GET and HEAD and 201 for POST
-             ok_code=None,
+PostProcessFunc = Callable[[Context, RequestData, 'RouteFunction', Any], bytes | str | IO[bytes]]
 
-             postprocess=None,
 
-             # Needs write access to the calibre database
-             needs_db_write=False
+class types_dict(dict):
+    _hash_val: int
 
-):
-    from calibre.srv.handler import Context
-    from calibre.srv.http_response import RequestData
+    def __new__(cls, types: dict[str, type]) -> Self:
+        ans = super().__new__(cls, types)
+        ans._hash_val = hash(tuple(sorted(types.items())))
+        return ans
 
-    def annotate(f):
-        f.route = route.rstrip('/') or '/'
-        f.route_key = route_key(f.route)
-        f.types = types or {}
-        f.methods = methods
-        f.auth_required = auth_required
-        f.android_workaround = android_workaround
-        f.cache_control = cache_control
-        f.postprocess = postprocess
-        f.ok_code = ok_code
-        f.is_endpoint = True
-        f.needs_db_write = needs_db_write
+    def __hash__(self) -> int:
+        return self._hash_val
+
+
+@dataclass(unsafe_hash=True)
+class RouteFunction:
+    f: Any
+    route: str
+    route_key: str
+    types: types_dict
+    methods: frozenset[str]
+    auth_required: bool
+    android_workaround: bool
+    cache_control: int | float | bool | Literal['no-cache'] | tuple[str, int] | None
+    ok_code: int | None
+    postprocess: PostProcessFunc | None
+    needs_db_write: bool
+
+    is_endpoint: bool = True
+
+    @property
+    def __name__(self) -> str:
+        return self.f.__name__
+
+    def __call__(self, ctx: Context, rd: RequestData, *path_segments: Any) -> Any:
+        return self.f(ctx, rd, *path_segments)
+
+
+def endpoint[**P](
+    route: str,
+    methods: frozenset[str] | set[str] | tuple[str, ...] = default_methods,
+    types: dict[str, type] | None = None,
+    auth_required: bool = True,
+    android_workaround: bool = False,
+    # Manage the HTTP caching
+    # Set to None or 'no-cache' to prevent caching of this endpoint
+    # Set to a number to cache for at most number hours
+    # Set to a tuple (cache_type, max_age) to explicitly set the
+    # Cache-Control header
+    cache_control: int | float | bool | Literal['no-cache'] | tuple[str, int] | None = False,
+    # The HTTP code to be used when no error occurs. By default it is
+    # 200 for GET and HEAD and 201 for POST
+    ok_code: int | None = None,
+    postprocess: PostProcessFunc | None = None,
+    # Needs write access to the calibre database
+    needs_db_write: bool = False,
+) -> Callable[[Callable[Concatenate[Context, RequestData, P], Any]], RouteFunction]:
+    from calibre.srv.handler import Context  # ruff: ignore[unused-import]
+    from calibre.srv.http_response import RequestData  # ruff: ignore[unused-import]
+
+    def annotate[**P](f: Callable[Concatenate[Context, RequestData, P], Any]) -> RouteFunction:
+        r = route.rstrip('/') or '/'
+        ans = RouteFunction(
+            f,
+            route=r,
+            route_key=route_key(r),
+            types=types_dict(types or {}),
+            methods=frozenset(methods),
+            auth_required=auth_required,
+            android_workaround=android_workaround,
+            cache_control=cache_control,
+            postprocess=postprocess,
+            ok_code=ok_code,
+            needs_db_write=needs_db_write,
+        )
         argspec = inspect.getfullargspec(f)
         if len(argspec.args) < 2:
-            raise TypeError('The endpoint %r must take at least two arguments' % f.route)
-        f.__annotations__ = {
-            argspec.args[0]: Context,
-            argspec.args[1]: RequestData,
-        }
-        f.__doc__ = textwrap.dedent(f.__doc__ or '') + '\n\n' + (
-            (':type %s: calibre.srv.handler.Context\n' % argspec.args[0]) +
-            (':type %s: calibre.srv.http_response.RequestData\n' % argspec.args[1])
+            raise TypeError(f'The endpoint {r!r} must take at least two arguments')
+        ans.__doc__ = (
+            textwrap.dedent(f.__doc__ or '')
+            + '\n\n'
+            + ((f':type {argspec.args[0]}: calibre.srv.handler.Context\n') + (f':type {argspec.args[1]}: calibre.srv.http_response.RequestData\n'))
         )
-        return f
+        return ans
+
     return annotate
 
 
 class Route:
-
     var_pat = None
 
-    def __init__(self, endpoint_):
+    def __init__(self, endpoint_: RouteFunction):
         if self.var_pat is None:
             Route.var_pat = self.var_pat = re.compile(r'{(.+?)}')
         self.endpoint = endpoint_
         del endpoint_
         if not self.endpoint.route.startswith('/'):
-            raise RouteError('A route must start with /, %s does not' % self.endpoint.route)
+            raise RouteError(f'A route must start with /, {self.endpoint.route} does not')
         parts = list(filter(None, self.endpoint.route.split('/')))
         matchers = self.matchers = []
         self.defaults = {}
@@ -143,9 +200,8 @@ class Route:
                         self.type_checkers[name] = type(default)
                     if is_sponge and not isinstance(default, str):
                         raise route_error('Soak up path component must have a default value of string type')
-                else:
-                    if found_optional_part is not False:
-                        raise route_error('Cannot have non-optional path components after optional ones')
+                elif found_optional_part is not False:
+                    raise route_error('Cannot have non-optional path components after optional ones')
                 if is_sponge:
                     self.soak_up_extra = name
                 matchers.append((name, True))
@@ -156,13 +212,13 @@ class Route:
         self.names = [n for n, m in matchers if n is not None]
         self.all_names = frozenset(self.names)
         self.required_names = self.all_names - frozenset(self.defaults)
-        argspec = inspect.getfullargspec(self.endpoint)
+        argspec = inspect.getfullargspec(self.endpoint.f)
         if len(self.names) + 2 != len(argspec.args) - len(argspec.defaults or ()):
-            raise route_error('Function must take %d non-default arguments' % (len(self.names) + 2))
-        if argspec.args[2:len(self.names)+2] != self.names:
-            raise route_error('Function\'s argument names do not match the variable names in the route')
+            raise route_error(f'Function {self.endpoint.f} must take {len(self.names) + 2} non-default arguments')
+        if argspec.args[2 : len(self.names) + 2] != self.names:
+            raise route_error("Function's argument names do not match the variable names in the route")
         if not frozenset(self.type_checkers).issubset(frozenset(self.names)):
-            raise route_error('There exist type checkers that do not correspond to route variables: %r' % (set(self.type_checkers) - set(self.names)))
+            raise route_error(f'There exist type checkers that do not correspond to route variables: {set(self.type_checkers) - set(self.names)!r}')
         self.min_size = found_optional_part if found_optional_part is not False else len(matchers)
         self.max_size = sys.maxsize if self.soak_up_extra else len(matchers)
 
@@ -186,7 +242,8 @@ class Route:
                 return tc(val)
             except Exception:
                 raise HTTPNotFound('Argument of incorrect type')
-        for name, tc in iteritems(self.type_checkers):
+
+        for name, tc in self.type_checkers.items():
             args_map[name] = check(tc, args_map[name])
         return (args_map[name] for name in self.names)
 
@@ -205,21 +262,23 @@ class Route:
             if isinstance(x, str):
                 x = x.encode('utf-8')
             return urlquote(x, '')
-        args = {k:'' for k in self.defaults}
+
+        args = {k: '' for k in self.defaults}
         args.update(kwargs)
-        args = {k:quoted(v) for k, v in iteritems(args)}
-        route = self.var_pat.sub(lambda m:'{%s}' % m.group(1).partition('=')[0].lstrip('+'), self.endpoint.route)
+        args = {k: quoted(v) for k, v in args.items()}
+        assert self.var_pat is not None
+        route = self.var_pat.sub(lambda m: '{{{}}}'.format(m.group(1).partition('=')[0].lstrip('+')), self.endpoint.route)
         return route.format(**args).rstrip('/')
 
     def __str__(self):
         return self.endpoint.route
+
     __unicode__ = __repr__ = __str__
 
 
 class Router:
-
     def __init__(self, endpoints=None, ctx=None, url_prefix=None, auth_controller=None):
-        self.routes = {}
+        self.routes: dict[str, Route] = {}
         self.url_prefix = (url_prefix or '').rstrip('/')
         self.strip_path = None
         if self.url_prefix:
@@ -228,8 +287,8 @@ class Router:
             self.strip_path = tuple(self.url_prefix[1:].split('/'))
         self.ctx = ctx
         self.auth_controller = auth_controller
-        self.init_session = getattr(ctx, 'init_session', lambda ep, data:None)
-        self.finalize_session = getattr(ctx, 'finalize_session', lambda ep, data, output:None)
+        self.init_session = getattr(ctx, 'init_session', lambda ep, data: None)
+        self.finalize_session = getattr(ctx, 'finalize_session', lambda ep, data, output: None)
         self.endpoints = set()
         if endpoints is not None:
             self.load_routes(endpoints)
@@ -250,20 +309,20 @@ class Router:
                 self.add(item)
 
     def __iter__(self):
-        return itervalues(self.routes)
+        yield from self.routes.values()
 
     def finalize(self):
         try:
             lsz = max(len(r.matchers) for r in self)
         except ValueError:
             lsz = 0
-        self.min_size_map = {sz:frozenset(r for r in self if r.min_size <= sz) for sz in range(lsz + 1)}
-        self.max_size_map = {sz:frozenset(r for r in self if r.max_size >= sz) for sz in range(lsz + 1)}
+        self.min_size_map = {sz: frozenset(r for r in self if r.min_size <= sz) for sz in range(lsz + 1)}
+        self.max_size_map = {sz: frozenset(r for r in self if r.max_size >= sz) for sz in range(lsz + 1)}
         self.soak_routes = sorted(frozenset(r for r in self if r.soak_up_extra), key=attrgetter('min_size'), reverse=True)
 
     def find_route(self, path):
-        if self.strip_path is not None and path[:len(self.strip_path)] == self.strip_path:
-            path = path[len(self.strip_path):]
+        if self.strip_path is not None and path[: len(self.strip_path)] == self.strip_path:
+            path = path[len(self.strip_path) :]
         size = len(path)
         # routes for which min_size <= size <= max_size
         routes = self.max_size_map.get(size, set()) & self.min_size_map.get(size, set())
@@ -289,14 +348,14 @@ class Router:
                 if x:
                     k, v = x.partition('=')[::2]
                     if k:
-                        # Since we only set simple hex encoded cookies, we dont
+                        # Since we only set simple hex encoded cookies, we don't
                         # need more sophisticated value parsing
                         c[k] = v.strip('"')
 
     def dispatch(self, data):
         endpoint_, args = self.find_route(data.path)
         if data.method not in endpoint_.methods:
-            raise HTTPSimpleResponse(http_client.METHOD_NOT_ALLOWED)
+            raise HTTPSimpleResponse(http.client.METHOD_NOT_ALLOWED)
 
         self.read_cookies(data)
 
@@ -308,7 +367,9 @@ class Router:
 
         self.init_session(endpoint_, data)
         if endpoint_.needs_db_write:
+            assert self.ctx is not None
             self.ctx.check_for_write_access(data)
+            data.needs_db_write = True
         ans = endpoint_(self.ctx, data, *args)
         self.finalize_session(endpoint_, data, ans)
         outheaders = data.outheaders
@@ -325,20 +386,20 @@ class Router:
                 outheaders['Pragma'] = 'no-cache'
             elif isinstance(cc, numbers.Number):
                 cc = int(60 * 60 * cc)
-                outheaders['Cache-Control'] = 'public, max-age=%d' % cc
+                outheaders['Cache-Control'] = f'public, max-age={cc}'
                 if cc == 0:
                     cc -= 100000
                 outheaders['Expires'] = http_date(cc + time.time())
             else:
                 ctype, max_age = cc
                 max_age = int(60 * 60 * max_age)
-                outheaders['Cache-Control'] = '%s, max-age=%d' % (ctype, max_age)
+                outheaders['Cache-Control'] = f'{ctype}, max-age={max_age}'
                 if max_age == 0:
                     max_age -= 100000
                 outheaders['Expires'] = http_date(max_age + time.time())
         return ans
 
-    def url_for(self, route, **kwargs):
+    def url_for(self, route: str | None, **kwargs: Any) -> str:
         if route is None:
             return self.url_prefix or '/'
         route = getattr(route, 'route_key', route)

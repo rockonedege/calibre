@@ -1,36 +1,36 @@
 #!/usr/bin/env python
+# License: GPLv3 Copyright: 2013, Kovid Goyal <kovid at kovidgoyal.net>
 
-
-__license__ = 'GPL v3'
-__copyright__ = '2013, Kovid Goyal <kovid at kovidgoyal.net>'
-
-from collections import namedtuple
 from itertools import count
+from typing import NamedTuple
 
 from lxml.etree import tostring
 
 from calibre.ebooks.metadata.toc import TOC
 from calibre.ebooks.oeb.polish.toc import elem_to_toc_text
-from polyglot.builtins import iteritems
+
+
+class TocItem(NamedTuple):
+    text: str
+    anchor: str
+    indent: float
 
 
 def from_headings(body, log, namespace, num_levels=3):
-    ' Create a TOC from headings in the document '
+    "Create a TOC from headings in the document"
     tocroot = TOC()
     all_heading_nodes = body.xpath('//*[@data-heading-level]')
-    level_prev = {i+1:None for i in range(num_levels)}
+    level_prev = {i + 1: None for i in range(num_levels)}
     level_prev[0] = tocroot
-    level_item_map = {i:frozenset(
-        x for x in all_heading_nodes if int(x.get('data-heading-level')) == i)
-        for i in range(1, num_levels+1)}
-    item_level_map = {e:i for i, elems in iteritems(level_item_map) for e in elems}
+    level_item_map = {i: frozenset(x for x in all_heading_nodes if int(x.get('data-heading-level')) == i) for i in range(1, num_levels + 1)}
+    item_level_map = {e: i for i, elems in level_item_map.items() for e in elems}
 
     idcount = count()
 
     def ensure_id(elem):
         ans = elem.get('id', None)
         if not ans:
-            ans = 'toc_id_%d' % (next(idcount) + 1)
+            ans = f'toc_id_{next(idcount) + 1}'
             elem.set('id', ans)
         return ans
 
@@ -39,6 +39,7 @@ def from_headings(body, log, namespace, num_levels=3):
         if lvl is None:
             continue
         parent = None
+        assert isinstance(plvl, int)
         while parent is None:
             plvl -= 1
             parent = level_prev[plvl]
@@ -47,7 +48,7 @@ def from_headings(body, log, namespace, num_levels=3):
         text = elem_to_toc_text(item)
         toc = parent.add_item('index.html', elem_id, text)
         level_prev[lvl] = toc
-        for i in range(lvl+1, num_levels+1):
+        for i in range(lvl + 1, num_levels + 1):
             level_prev[i] = None
 
     if len(tuple(tocroot.flat())) > 1:
@@ -75,9 +76,8 @@ def structure_toc(entries):
     for item in entries:
         level = indent_vals.index(item.indent)
         parent = find_parent(level)
-        last_found[level] = parent.add_item('index.html', item.anchor,
-                    item.text)
-        for i in range(level+1, len(last_found)):
+        last_found[level] = parent.add_item('index.html', item.anchor, item.text)
+        for i in range(level + 1, len(last_found)):
             last_found[i] = None
 
     return newtoc
@@ -99,7 +99,6 @@ def from_toc(docx, link_map, styles, object_map, log, namespace):
     XPath, get, ancestor = namespace.XPath, namespace.get, namespace.ancestor
     toc_level = None
     level = 0
-    TI = namedtuple('TI', 'text anchor indent')
     toc = []
     for tag in XPath('//*[(@w:fldCharType and name()="w:fldChar") or name()="w:hyperlink" or name()="w:instrText"]')(docx):
         n = tag.tag.rpartition('}')[-1]
@@ -123,12 +122,12 @@ def from_toc(docx, link_map, styles, object_map, log, namespace):
                 if txt and href and p is not None:
                     ps = styles.resolve_paragraph(p)
                     try:
-                        ml = int(ps.margin_left[:-2])
-                    except (TypeError, ValueError, AttributeError):
+                        ml = float(ps.margin_left[:-2])
+                    except TypeError, ValueError, AttributeError:
                         ml = 0
                     if ps.text_align in {'center', 'right'}:
                         ml = 0
-                    toc.append(TI(txt, href[1:], ml))
+                    toc.append(TocItem(txt, href[1:], ml))
     if toc:
         log('Found Word Table of Contents, using it to generate the Table of Contents')
         return structure_toc(toc)

@@ -11,13 +11,15 @@
 #                                                                       #
 #########################################################################
 import os
+
 from calibre.ebooks.rtf2xml import copy
 from calibre.ptempfile import better_mktemp
+
 from . import open_for_read, open_for_write
 
 # note to self. This is the first module in which I use tempfile. A good idea?
-"""
-"""
+'''
+'''
 
 
 class TableInfo:
@@ -26,12 +28,14 @@ class TableInfo:
     Logic:
     """
 
-    def __init__(self,
-            in_file,
-            bug_handler,
-            table_data,
-            copy=None,
-            run_level=1,):
+    def __init__(
+        self,
+        in_file,
+        bug_handler,
+        table_data,
+        copy=None,
+        run_level=1,
+    ):
         """
         Required:
             'file'--file to parse
@@ -42,7 +46,7 @@ class TableInfo:
             directory from which the script is run.)
         Returns:
             nothing
-            """
+        """
         self.__file = in_file
         self.__bug_handler = bug_handler
         self.__copy = copy
@@ -52,8 +56,6 @@ class TableInfo:
         # self.__write_to = 'table_info.data'
 
     def insert_info(self):
-        """
-        """
         read_obj = open_for_read(self.__file)
         self.__write_obj = open_for_write(self.__write_to)
         line_to_read = 1
@@ -82,6 +84,6 @@ class TableInfo:
         self.__write_obj.close()
         copy_obj = copy.Copy(bug_handler=self.__bug_handler)
         if self.__copy:
-            copy_obj.copy_file(self.__write_to, "table_info.data")
+            copy_obj.copy_file(self.__write_to, 'table_info.data')
         copy_obj.rename(self.__write_to, self.__file)
         os.remove(self.__write_to)

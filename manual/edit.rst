@@ -4,10 +4,10 @@ Editing e-books
 ========================
 
 calibre has an integrated e-book editor that can be used to edit books in the
-EPUB and AZW3 (Kindle) formats. The editor shows you the HTML and CSS that is
-used internally inside the book files, with a live preview that updates as you
-make changes. It also contains various automated tools to perform common
-cleanup and fixing tasks.
+EPUB, KEPUB (Kobo) and AZW3 (Kindle) formats. The editor shows you the HTML and
+CSS that is used internally inside the book files, with a live preview that
+updates as you make changes. It also contains various automated tools to
+perform common cleanup and fixing tasks.
 
 You can use this editor by right clicking on any book in calibre and selecting
 :guilabel:`Edit book`.
@@ -33,8 +33,8 @@ a list of files on the left. These are the individual HTML files, stylesheets,
 images, etc. that make up the content of the book. Simply double click on a
 file to start editing it. Note that if you want to do anything more
 sophisticated than making a few small tweaks, you will need to know `HTML
-Tutorial <http://html.net/tutorials/html/>`_ and `CSS Tutorial
-<http://html.net/tutorials/css/>`_.
+Tutorial <https://www.w3schools.com/Html/default.asp>`_ and `CSS Tutorial
+<https://www.w3schools.com/css/default.asp>`_.
 
 As you make changes to the HTML or CSS in the editor, the changes will be
 previewed, live, in the preview panel to the right. When you are happy with how
@@ -44,7 +44,7 @@ the changes you have made look, click the :guilabel:`Save` button or use
 One useful feature is :guilabel:`Checkpoints`. Before you embark on some
 ambitious set of edits, you can create a checkpoint. The checkpoint
 will preserve the current state of your book, then if in the future you decide
-you don't like the changes you have made to you can go back to the state when
+you don't like the changes you have made, you can go back to the state when
 you created the checkpoint. To create a checkpoint, use :guilabel:`Edit->Create
 checkpoint`. Checkpoints will also be automatically created for you whenever you
 run any automated tool like global search and replace. The checkpointing
@@ -133,11 +133,14 @@ Changing text file order
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 You can re-arrange the order in which text (HTML) files are opened when reading
-the book by simply dragging and dropping them in the Files browser. For the
-technically inclined, this is called re-ordering the book spine. Note that you
-have to drop the items *between* other items, not on top of them, this can be a
-little fiddly until you get used to it. Dropping on top of another file will
-cause the files to be merged.
+the book by simply dragging and dropping them in the :guilabel:`File browser` or clicking
+on the file to move and then pressing the :kbd:`Ctrl+Shift` modifiers with the
+:kbd:`Up`, :kbd:`Down`, :kbd:`Home` or :kbd:`End` keys. For the technically
+inclined, this is called re-ordering the book spine.
+
+Note that you have to drop the items *between* other items, not on top of them,
+this can be a little fiddly until you get used to it. Dropping on top of
+another file will cause the files to be merged.
 
 Marking the cover
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -147,7 +150,7 @@ E-books typically have a cover image. This image is indicated in the
 you want to designate some other image as the cover, you can do so by right
 clicking on the file and choosing :guilabel:`Mark as cover`.
 
-In addition, EPUB files has the concept of a *titlepage*. A title page is a
+In addition, EPUB files have the concept of a *titlepage*. A title page is a
 HTML file that acts as the title page/cover for the book. You can mark an HTML
 file as the titlepage when editing EPUBs by right-clicking. Be careful that the
 file you mark contains only the cover information. If it contains other
@@ -275,7 +278,7 @@ Search ignoring HTML tags
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 There is also a dedicated tool for searching for text, ignoring any HTML tags
-in between. For example, if the book has the HTML ``Empahisis on a
+in between. For example, if the book has the HTML ``Emphasis on a
 <i>word</i>.`` you can search for ``on a word`` and it will be found even
 though there is an ``<i>`` tag in the middle. Use this
 tool via the :guilabel:`Search->Search ignoring HTML markup` menu item.
@@ -332,6 +335,13 @@ some help about that error as well as giving you the option to auto-fix that
 error, if the error can be fixed automatically. You can also double click the
 error to open the location of the error in an editor, so you can fix it
 yourself.
+
+If there is a type of problem you do not care about, click the
+:guilabel:`Skip problems of this type` link in the help for that error. All
+problems of that type will no longer be reported. When some types of problems
+are being skipped, an entry at the bottom of the list says so. Click it to see
+the list of skipped problem types and un-skip any of them. Errors that prevent
+the book from being parsed cannot be skipped.
 
 Some of the checks performed are:
 
@@ -535,7 +545,6 @@ The Live preview panel
     :alt: The Live preview panel showing a rendering of the current file
     :class: float-left-img
 
-The :guilabel:`File preview` gives you an overview of the various files inside
 The live preview panel shows you the changes you are making live (with a second
 or two of delay). As you edit HTML or CSS files, the preview panel is updated
 automatically to reflect your changes. As you move the cursor around in the
@@ -551,7 +560,7 @@ panel only happens when you are not actively typing in the editor, so as not to
 be distracting or slow you down, waiting for the preview to render.
 
 The preview panel shows you how the text will look when viewed. However, the
-preview panel is not a substitute for actually testing your book an actual
+preview panel is not a substitute for actually testing your book on an actual
 reader device. It is both more, and less capable than an actual reader. It will
 tolerate errors and sloppy markup much better than most reader devices. It will
 also not show you page margins, page breaks and embedded fonts that use font
@@ -790,7 +799,7 @@ shows summaries of the files, images, links, words, characters and styles used
 in the book. Every line in the report is hot-linked. Double clicking a line
 jumps to the place in the book where that item is used or defined (as
 appropriate). For example, in the :guilabel:`Links` view, you can double click
-entries the :guilabel:`Source` column to jump to where the link is defined and
+entries in the :guilabel:`Source` column to jump to where the link is defined and
 entries in the :guilabel:`Target` column to jump to where the link points.
 
 .. image:: images/reports-ss.png
@@ -814,7 +823,8 @@ The HTML editor has very sophisticated syntax highlighting. Features include:
     * As you move your cursor through the HTML, the matching HTML tags are
       highlighted, and you can jump to the opening or closing tag with the
       keyboard shortcuts :kbd:`Ctrl+{` and :kbd:`Ctrl+}`. Similarly, you
-      can select the contents of a tag with :kbd:`Ctrl+Alt+T`.
+      can select the contents of a tag with :kbd:`Ctrl+Alt+T` or
+      :kbd:`Ctrl+Shift+T`.
     * Invalid HTML is highlighted with a red underline
     * Spelling errors in the text inside HTML tags and attributes such as title
       are highlighted. The spell checking is language aware, based on the value

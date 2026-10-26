@@ -1,17 +1,19 @@
 #!/usr/bin/env python
 # License: GPLv3 Copyright: 2018, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 import sys
 
+from calibre.ebooks.conversion.plugins.epub_input import ADOBE_OBFUSCATION, IDPF_OBFUSCATION
+from calibre.ebooks.metadata.opf3 import XPath
 from calibre.ebooks.metadata.opf_2_to_3 import upgrade_metadata
-from calibre.ebooks.oeb.base import EPUB_NS, OEB_DOCS, xpath
+from calibre.ebooks.oeb.base import DC, EPUB_NS, OEB_DOCS, xpath
 from calibre.ebooks.oeb.parse_utils import ensure_namespace_prefixes
-from calibre.ebooks.oeb.polish.utils import OEB_FONTS
 from calibre.ebooks.oeb.polish.opf import get_book_language
-from calibre.ebooks.oeb.polish.toc import (
-    commit_nav_toc, find_existing_ncx_toc, get_landmarks, get_toc
-)
+from calibre.ebooks.oeb.polish.toc import commit_nav_toc, find_existing_ncx_toc, get_landmarks, get_toc
+from calibre.ebooks.oeb.polish.utils import OEB_FONTS
+from calibre.ebooks.oeb.transforms.guide import CUSTOM_GUIDE_TYPE_PREFIX, KNOWN_GUIDE_TYPES
+from calibre.utils.localization import _
+from calibre.utils.short_uuid import uuid4
 
 
 def add_properties(item, *props):
@@ -31,13 +33,48 @@ def fix_font_mime_types(container):
     return changed
 
 
+def migrate_obfuscated_fonts(container):
+    if not container.obfuscated_fonts:
+        return
+    name_to_elem_map = {}
+    for em, cr in container.iter_encryption_entries():
+        alg = em.get('Algorithm')
+        if cr is None or alg not in {ADOBE_OBFUSCATION, IDPF_OBFUSCATION}:
+            continue
+        name = container.href_to_name(cr.get('URI'))
+        name_to_elem_map[name] = em, cr
+    package_id, raw_unique_identifier, idpf_key = container.read_raw_unique_identifier()
+    if not idpf_key:
+        if not package_id:
+            package_id = uuid4()
+            container.opf.set('unique-identifier', package_id)
+        metadata = XPath('./opf:metadata')(container.opf)[0]
+        ident = metadata.makeelement(DC('identifier'))
+        ident.text = uuid4()
+        metadata.append(ident)
+        package_id, raw_unique_identifier, idpf_key = container.read_raw_unique_identifier()
+    for name in tuple(container.obfuscated_fonts):
+        try:
+            em, cr = name_to_elem_map[name]
+        except KeyError:
+            container.obfuscated_fonts.pop(name)
+            continue
+        em.set('Algorithm', IDPF_OBFUSCATION)
+        cr.set('URI', container.name_to_href(name))
+        container.obfuscated_fonts[name] = (IDPF_OBFUSCATION, idpf_key)
+    container.commit_item('META-INF/encryption.xml')
+
+
 def collect_properties(container):
     for item in container.opf_xpath('//opf:manifest/opf:item[@href and @media-type]'):
         mt = item.get('media-type') or ''
         if mt.lower() not in OEB_DOCS:
             continue
         name = container.href_to_name(item.get('href'), container.opf_name)
-        root = container.parsed(name)
+        try:
+            root = container.parsed(name)
+        except KeyError:
+            continue
         root = ensure_namespace_prefixes(root, {'epub': EPUB_NS})
         properties = set()
         container.replace(name, root)  # Ensure entities are converted
@@ -54,51 +91,64 @@ def collect_properties(container):
 
 
 guide_epubtype_map = {
-     'acknowledgements'   : 'acknowledgments',
-     'other.afterword'    : 'afterword',
-     'other.appendix'     : 'appendix',
-     'other.backmatter'   : 'backmatter',
-     'bibliography'       : 'bibliography',
-     'text'               : 'bodymatter',
-     'other.chapter'      : 'chapter',
-     'colophon'           : 'colophon',
-     'other.conclusion'   : 'conclusion',
-     'other.contributors' : 'contributors',
-     'copyright-page'     : 'copyright-page',
-     'cover'              : 'cover',
-     'dedication'         : 'dedication',
-     'other.division'     : 'division',
-     'epigraph'           : 'epigraph',
-     'other.epilogue'     : 'epilogue',
-     'other.errata'       : 'errata',
-     'other.footnotes'    : 'footnotes',
-     'foreword'           : 'foreword',
-     'other.frontmatter'  : 'frontmatter',
-     'glossary'           : 'glossary',
-     'other.halftitlepage': 'halftitlepage',
-     'other.imprint'      : 'imprint',
-     'other.imprimatur'   : 'imprimatur',
-     'index'              : 'index',
-     'other.introduction' : 'introduction',
-     'other.landmarks'    : 'landmarks',
-     'other.loa'          : 'loa',
-     'loi'                : 'loi',
-     'lot'                : 'lot',
-     'other.lov'          : 'lov',
-     'notes'              : '',
-     'other.notice'       : 'notice',
-     'other.other-credits': 'other-credits',
-     'other.part'         : 'part',
-     'other.preamble'     : 'preamble',
-     'preface'            : 'preface',
-     'other.prologue'     : 'prologue',
-     'other.rearnotes'    : 'rearnotes',
-     'other.subchapter'   : 'subchapter',
-     'title-page'         : 'titlepage',
-     'toc'                : 'toc',
-     'other.volume'       : 'volume',
-     'other.warning'      : 'warning'
+    'acknowledgements': 'acknowledgments',
+    'other.afterword': 'afterword',
+    'other.appendix': 'appendix',
+    'other.backmatter': 'backmatter',
+    'bibliography': 'bibliography',
+    'text': 'bodymatter',
+    'other.chapter': 'chapter',
+    'colophon': 'colophon',
+    'other.conclusion': 'conclusion',
+    'other.contributors': 'contributors',
+    'copyright-page': 'copyright-page',
+    'cover': 'cover',
+    'dedication': 'dedication',
+    'other.division': 'division',
+    'epigraph': 'epigraph',
+    'other.epilogue': 'epilogue',
+    'other.errata': 'errata',
+    'other.footnotes': 'footnotes',
+    'foreword': 'foreword',
+    'other.frontmatter': 'frontmatter',
+    'glossary': 'glossary',
+    'other.halftitlepage': 'halftitlepage',
+    'other.imprint': 'imprint',
+    'other.imprimatur': 'imprimatur',
+    'index': 'index',
+    'other.introduction': 'introduction',
+    'other.landmarks': 'landmarks',
+    'other.loa': 'loa',
+    'loi': 'loi',
+    'lot': 'lot',
+    'other.lov': 'lov',
+    'notes': '',
+    'other.notice': 'notice',
+    'other.other-credits': 'other-credits',
+    'other.part': 'part',
+    'other.preamble': 'preamble',
+    'preface': 'preface',
+    'other.prologue': 'prologue',
+    'other.rearnotes': 'rearnotes',
+    'other.subchapter': 'subchapter',
+    'title-page': 'titlepage',
+    'toc': 'toc',
+    'other.volume': 'volume',
+    'other.warning': 'warning',
 }
+epubtype_guide_map = {v: k for k, v in guide_epubtype_map.items() if v}
+
+
+def epubtype_for_guide_type(gtype: str) -> str | None:
+    if gtype.lower().startswith(CUSTOM_GUIDE_TYPE_PREFIX):
+        return gtype[len(CUSTOM_GUIDE_TYPE_PREFIX) :] or None
+    return guide_epubtype_map.get(gtype.lower())
+
+
+def guide_type_for_epubtype(epubtype: str) -> str:
+    # Conversion keeps only known guide types, so use a custom type for the rest
+    gtype = epubtype_guide_map.get(epubtype)
+    return gtype if gtype in KNOWN_GUIDE_TYPES else (CUSTOM_GUIDE_TYPE_PREFIX + epubtype)
 
 
 def create_nav(container, toc, landmarks, previous_nav=None):
@@ -107,7 +157,7 @@ def create_nav(container, toc, landmarks, previous_nav=None):
         lang = None
     if landmarks:
         for entry in landmarks:
-            entry['type'] = guide_epubtype_map.get(entry['type'].lower())
+            entry['type'] = epubtype_for_guide_type(entry['type'])
             if entry['type'] == 'cover' and container.mime_map.get(entry['dest'], '').lower() in OEB_DOCS:
                 container.apply_unique_properties(entry['dest'], 'calibre:title-page')
     commit_nav_toc(container, toc, lang=lang, landmarks=landmarks, previous_nav=previous_nav)
@@ -128,11 +178,12 @@ def epub_2_to_3(container, report, previous_nav=None, remove_ncx=True):
     container.opf.set('version', '3.0')
     if fix_font_mime_types(container):
         container.refresh_mime_map()
+    migrate_obfuscated_fonts(container)
     container.dirty(container.opf_name)
 
 
 def upgrade_book(container, report, remove_ncx=True):
-    if container.book_type != 'epub' or container.opf_version_parsed.major >= 3:
+    if container.book_type not in ('epub', 'kepub') or container.opf_version_parsed.major >= 3:
         report(_('No upgrade needed'))
         return False
     epub_2_to_3(container, report, remove_ncx=remove_ncx)
@@ -143,6 +194,7 @@ def upgrade_book(container, report, remove_ncx=True):
 if __name__ == '__main__':
     from calibre.ebooks.oeb.polish.container import get_container
     from calibre.utils.logging import default_log
+
     default_log.filter_level = default_log.DEBUG
     inbook = sys.argv[-1]
     ebook = get_container(inbook, default_log)

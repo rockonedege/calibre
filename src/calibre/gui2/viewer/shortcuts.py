@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 # License: GPL v3 Copyright: 2019, Kovid Goyal <kovid at kovidgoyal.net>
 
-
 from qt.core import QKeySequence, QMainWindow, Qt
-
 
 key_name_to_qt_name = {
     'ArrowRight': 'Right',
@@ -41,8 +39,11 @@ def ev_to_index(ev):
     m = ev.modifiers()
     mods = []
     for x in (
-            Qt.KeyboardModifier.AltModifier, Qt.KeyboardModifier.ControlModifier,
-            Qt.KeyboardModifier.MetaModifier, Qt.KeyboardModifier.ShiftModifier):
+        Qt.KeyboardModifier.AltModifier,
+        Qt.KeyboardModifier.ControlModifier,
+        Qt.KeyboardModifier.MetaModifier,
+        Qt.KeyboardModifier.ShiftModifier,
+    ):
         mods.append('y' if m & x else 'n')
     return ''.join(mods) + key_to_text(ev.key())
 
